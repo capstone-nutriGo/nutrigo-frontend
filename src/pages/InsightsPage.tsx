@@ -39,7 +39,7 @@ const calendarData = [
   ]},
   { date: 3, calories: 2400, sodium: 3200, level: "red", meals: [
     { name: "치킨", restaurant: "치킨플러스", time: "19:30", calories: 1850, sodium: 3200 },
-    { name: "떡볶이", restaurant: "국대떡볶이", time: "15:00", calories: 550, sodium: 1800 }
+    { name: "���볶이", restaurant: "국대떡볶이", time: "15:00", calories: 550, sodium: 1800 }
   ]},
   { date: 4, calories: 1950, sodium: 2100, level: "green", meals: [
     { name: "연어 덮밥", restaurant: "스시야", time: "12:00", calories: 780, sodium: 1100 }
@@ -115,6 +115,15 @@ const calendarData = [
   { date: 27, calories: 2200, sodium: 2600, level: "yellow", meals: [
     { name: "까르보나라 파스타", restaurant: "파스타 하우스", time: "19:00", calories: 980, sodium: 2100 }
   ]},
+  { date: 28, calories: 1850, sodium: 2000, level: "green", meals: [
+    { name: "김밥 세트", restaurant: "김밥천국", time: "12:00", calories: 650, sodium: 1500 }
+  ]},
+  { date: 29, calories: 1900, sodium: 2100, level: "green", meals: [
+    { name: "된장찌개", restaurant: "백반집", time: "13:00", calories: 680, sodium: 2100 }
+  ]},
+  { date: 30, calories: 2300, sodium: 2800, level: "yellow", meals: [
+    { name: "갈비탕", restaurant: "한식당", time: "19:00", calories: 920, sodium: 2800 }
+  ]},
 ];
 
 // 주간 보고서 데이터
@@ -139,6 +148,19 @@ export function InsightsPage() {
   const [currentYear, setCurrentYear] = useState(2025);
   const [selectedDate, setSelectedDate] = useState<typeof calendarData[0] | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+
+  // 해당 월의 마지막 날짜 계산
+  const getDaysInMonth = (year: number, month: number) => {
+    return new Date(year, month, 0).getDate();
+  };
+
+  // 해당 월의 첫 날 요일 계산 (0: 일요일, 6: 토요일)
+  const getFirstDayOfMonth = (year: number, month: number) => {
+    return new Date(year, month - 1, 1).getDay();
+  };
+
+  const daysInMonth = getDaysInMonth(currentYear, currentMonth);
+  const firstDayOfWeek = getFirstDayOfMonth(currentYear, currentMonth);
 
   const handleDateClick = (day: typeof calendarData[0]) => {
     setSelectedDate(day);
@@ -256,7 +278,7 @@ export function InsightsPage() {
                 {/* 날짜 그리드 */}
                 <div className="grid grid-cols-7 gap-2">
                   {/* 빈 칸 (11월 1일이 금요일이므로 5칸) */}
-                  {[...Array(5)].map((_, i) => (
+                  {[...Array(firstDayOfWeek)].map((_, i) => (
                     <div key={`empty-${i}`} className="aspect-square"></div>
                   ))}
                   
