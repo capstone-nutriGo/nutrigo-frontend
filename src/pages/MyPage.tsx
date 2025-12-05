@@ -2,68 +2,170 @@ import { useState, useEffect } from "react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Label } from "../components/ui/label";
+import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Target, User, Activity, Save, Settings, Camera, Calendar, Trophy } from "lucide-react";
+import { Target, User, Activity, Save, Settings, Camera, Calendar, Trophy, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner@2.0.3";
+import { getProfile, updateProfile, updateSettings, type UserProfileResponse, type Gender, type DefaultMode } from "../api/user";
+import { handleApiError, isUnauthorizedError } from "../api/errorHandler";
 
 export function MyPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [age, setAge] = useState("");
-  const [gender, setGender] = useState("");
-  const [activity, setActivity] = useState("");
+  const { isLoggedIn } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  
+  // 프로필 정보
+  const [profile, setProfile] = useState<UserProfileResponse | null>(null);
+  const [nickname, setNickname] = useState("");
+  const [name, setName] = useState("");
+  const [gender, setGender] = useState<Gender | "">("");
+  const [birthday, setBirthday] = useState("");
+  
+  // 설정 정보
+  const [defaultMode, setDefaultMode] = useState<DefaultMode | "">("");
+  const [eveningCoach, setEveningCoach] = useState(false);
+  const [challengeReminder, setChallengeReminder] = useState(false);
 
-  // 저장된 정보 불러오기
+  // 프로필 정보 불러오기
   useEffect(() => {
-    // 사용자 기본 정보
-    if (user?.age) setAge(user.age);
-    if (user?.gender) setGender(user.gender);
-
-    // 기본 정보 불러오기
-    const savedGoals = localStorage.getItem('nutritionGoals');
-    if (savedGoals) {
-      const goals = JSON.parse(savedGoals);
-      if (goals.activity) setActivity(goals.activity);
+    if (!isLoggedIn) {
+      toast.error("로그인이 필요합니다.");
+      navigate("/login");
+      return;
     }
-  }, [user]);
 
-  const handleSaveInfo = () => {
-    // 로컬 스토리지에 저장
-    const info = {
-      age, gender, activity
+    const fetchProfile = async () => {
+      try {
+        setLoading(true);
+        const data = await getProfile();
+        setProfile(data);
+        
+        // 폼에 데이터 채우기
+        if (data.data) {
+          setNickname(data.data.nickname || "");
+          setName(data.data.name || "");
+          setGender(data.data.gender || "");
+          setBirthday(data.data.birthday || "");
+          setDefaultMode(data.data.preferences?.defaultMode || "");
+          
+          // 설정 정보는 로컬 스토리지에서 불러오기 (백엔드에 설정 조회 API가 없음)
+          const savedSettings = localStorage.getItem('userSettings');
+          if (savedSettings) {
+            try {
+              const settings = JSON.parse(savedSettings);
+              setEveningCoach(settings.eveningCoach ?? false);
+              setChallengeReminder(settings.challengeReminder ?? false);
+            } catch (e) {
+              console.error("설정 불러오기 실패:", e);
+            }
+          }
+        }
+      } catch (error: any) {
+        console.error("프로필 조회 실패:", error);
+        const errorInfo = handleApiError(error);
+        if (isUnauthorizedError(error)) {
+          // 401 에러는 인터셉터에서 이미 처리됨
+          return;
+        }
+      } finally {
+        setLoading(false);
+      }
     };
-    localStorage.setItem('userInfo', JSON.stringify(info));
-    
-    // 토스트 메시지 표시
-    toast.success("기본 정보가 저장되었어요!");
-  };
 
-  const getRecommendedCalories = () => {
-    if (!age || !gender || !activity) return null;
-    
-    const ageNum = parseInt(age);
-    let bmr = 0;
-    
-    if (gender === 'male') {
-      bmr = 88.362 + (13.397 * 70) + (4.799 * 170) - (5.677 * ageNum); // 가정: 70kg, 170cm
-    } else {
-      bmr = 447.593 + (9.247 * 60) + (3.098 * 160) - (4.330 * ageNum); // 가정: 60kg, 160cm
+    fetchProfile();
+  }, [isLoggedIn, navigate]);
+
+  const handleSaveProfile = async () => {
+    try {
+      setSaving(true);
+      await updateProfile({
+        nickname: nickname || undefined,
+        name: name || undefined,
+        gender: gender || undefined,
+        birthday: birthday || undefined,
+      });
+      
+      // 프로필 다시 불러오기
+      const updatedProfile = await getProfile();
+      setProfile(updatedProfile);
+      
+      toast.success("프로필이 저장되었어요!");
+    } catch (error: any) {
+      console.error("프로필 저장 실패:", error);
+      const errorInfo = handleApiError(error);
+      if (isUnauthorizedError(error)) {
+        // 401 에러는 인터셉터에서 이미 처리됨
+        return;
+      }
+    } finally {
+      setSaving(false);
     }
-    
-    const activityMultiplier = {
-      'sedentary': 1.2,
-      'light': 1.375,
-      'moderate': 1.55,
-      'active': 1.725,
-      'very_active': 1.9
-    }[activity] || 1.2;
-    
-    return Math.round(bmr * activityMultiplier);
   };
 
-  const recommendedCal = getRecommendedCalories();
+  const handleSaveSettings = async () => {
+    // 토큰 확인
+    const tokenData = localStorage.getItem("tokenData");
+    if (!tokenData) {
+      toast.error("로그인이 필요합니다. 다시 로그인해주세요.");
+      navigate("/login");
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(tokenData);
+      if (!parsed.accessToken) {
+        toast.error("인증 토큰이 없습니다. 다시 로그인해주세요.");
+        navigate("/login");
+        return;
+      }
+    } catch (error) {
+      toast.error("토큰 정보를 읽을 수 없습니다. 다시 로그인해주세요.");
+      navigate("/login");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await updateSettings({
+        notification: {
+          eveningCoach,
+          challengeReminder,
+        },
+        defaultMode: defaultMode || undefined,
+      });
+      
+      // 로컬 스토리지에도 저장
+      localStorage.setItem('userSettings', JSON.stringify({
+        eveningCoach,
+        challengeReminder,
+      }));
+      
+      toast.success("설정이 저장되었어요!");
+    } catch (error: any) {
+      console.error("설정 저장 실패:", error);
+      const errorInfo = handleApiError(error);
+      if (isUnauthorizedError(error)) {
+        // 401 에러는 인터셉터에서 이미 처리됨
+        return;
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-emerald-50/30 via-stone-50 to-lime-50/30 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-primary" />
+          <p className="text-muted-foreground">프로필 정보를 불러오는 중...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50/30 via-stone-50 to-lime-50/30">
@@ -92,93 +194,138 @@ export function MyPage() {
                   <div className="space-y-2">
                     <Label>이메일</Label>
                     <div className="p-3 bg-gray-50 rounded-lg">
-                      {user?.email || '이메일 없음'}
+                      {profile?.data.email || '이메일 없음'}
                     </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>닉네임</Label>
+                    <Input
+                      value={nickname}
+                      onChange={(e) => setNickname(e.target.value)}
+                      placeholder="닉네임을 입력하세요"
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>이름</Label>
-                    <div className="p-3 bg-gray-50 rounded-lg">
-                      {user?.name || '이름 없음'}
-                    </div>
+                    <Input
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="이름을 입력하세요"
+                    />
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* 기본 정보 */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Settings className="w-6 h-6 text-primary" />
-                  기본 정보
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid md:grid-cols-3 gap-6">
-                  <div className="space-y-2">
-                    <Label>연령대</Label>
-                    <Select value={age} onValueChange={setAge}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="선택하세요" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="20">20대</SelectItem>
-                        <SelectItem value="30">30대</SelectItem>
-                        <SelectItem value="40">40대</SelectItem>
-                        <SelectItem value="50">50대</SelectItem>
-                        <SelectItem value="60">60대 이상</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
                   <div className="space-y-2">
                     <Label>성별</Label>
-                    <Select value={gender} onValueChange={setGender}>
+                    <Select value={gender} onValueChange={(value) => setGender(value as Gender)}>
                       <SelectTrigger>
                         <SelectValue placeholder="선택하세요" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="male">남성</SelectItem>
                         <SelectItem value="female">여성</SelectItem>
+                        <SelectItem value="other">기타</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>생년월일</Label>
+                    <Input
+                      type="date"
+                      value={birthday}
+                      onChange={(e) => setBirthday(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <Button 
+                  onClick={handleSaveProfile} 
+                  className="w-full" 
+                  size="lg"
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      저장 중...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4 mr-2" />
+                      프로필 저장
+                    </>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* 알림 설정 */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings className="w-6 h-6 text-primary" />
+                  알림 설정
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div>
+                      <Label className="text-base">저녁 코치 알림</Label>
+                      <p className="text-sm text-muted-foreground">
+                        저녁 식사 전 영양 코칭을 받아보세요
+                      </p>
+                    </div>
+                    <Select 
+                      value={eveningCoach ? "true" : "false"} 
+                      onValueChange={(value) => setEveningCoach(value === "true")}
+                    >
+                      <SelectTrigger className="w-24">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">켜기</SelectItem>
+                        <SelectItem value="false">끄기</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   
-                  <div className="space-y-2">
-                    <Label>활동량</Label>
-                    <Select value={activity} onValueChange={setActivity}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="선택하세요" />
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div>
+                      <Label className="text-base">챌린지 리마인더</Label>
+                      <p className="text-sm text-muted-foreground">
+                        챌린지 진행 상황을 알려드려요
+                      </p>
+                    </div>
+                    <Select 
+                      value={challengeReminder ? "true" : "false"} 
+                      onValueChange={(value) => setChallengeReminder(value === "true")}
+                    >
+                      <SelectTrigger className="w-24">
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="sedentary">좌식 생활</SelectItem>
-                        <SelectItem value="light">가벼운 활동</SelectItem>
-                        <SelectItem value="moderate">보통 활동</SelectItem>
-                        <SelectItem value="active">활발한 활동</SelectItem>
-                        <SelectItem value="very_active">매우 활발</SelectItem>
+                        <SelectItem value="true">켜기</SelectItem>
+                        <SelectItem value="false">끄기</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
-                
-                {recommendedCal && (
-                  <div className="bg-green-50 border border-green-300 rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Activity className="w-5 h-5 text-green-700" />
-                      <span className="text-green-900">권장 칼로리</span>
-                    </div>
-                    <p className="text-green-800">
-                      입력하신 정보를 바탕으로 일일 권장 칼로리는 <strong>{recommendedCal} kcal</strong>입니다.
-                    </p>
-                    <p className="text-sm text-green-700 mt-2">
-                      💡 이 정보를 활용하여 챌린지 페이지에서 칼로리 목표 챌린지를 만들어보세요!
-                    </p>
-                  </div>
-                )}
 
-                <Button onClick={handleSaveInfo} className="w-full" size="lg">
-                  <Save className="w-4 h-4 mr-2" />
-                  기본 정보 저장
+                <Button 
+                  onClick={handleSaveSettings} 
+                  className="w-full" 
+                  size="lg"
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      저장 중...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4 mr-2" />
+                      설정 저장
+                    </>
+                  )}
                 </Button>
               </CardContent>
             </Card>

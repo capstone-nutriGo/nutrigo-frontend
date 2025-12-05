@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -13,6 +13,8 @@ import {
 import { useNavigate, useLocation } from "react-router-dom";
 import { Logo } from "./Logo";
 import { useAuth } from "../contexts/AuthContext";
+import { getProfile } from "../api/user";
+import type { UserProfileResponse } from "../api/user";
 
 import {
   Sheet,
@@ -30,8 +32,27 @@ export function Header() {
   const location = useLocation();
   const { isLoggedIn, logout } = useAuth();
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [userProfile, setUserProfile] = useState<UserProfileResponse | null>(null);
 
   const mbtiType = localStorage.getItem("nutrigo_mbti");
+
+  // 사용자 프로필 정보 불러오기
+  useEffect(() => {
+    if (isLoggedIn) {
+      const fetchProfile = async () => {
+        try {
+          const profile = await getProfile();
+          setUserProfile(profile);
+        } catch (error) {
+          // 프로필 조회 실패 시 무시 (로그인만 되어 있으면 됨)
+          console.error("프로필 조회 실패:", error);
+        }
+      };
+      fetchProfile();
+    } else {
+      setUserProfile(null);
+    }
+  }, [isLoggedIn]);
 
   const handleLogout = () => {
     logout();
@@ -122,7 +143,7 @@ export function Header() {
                   onClick={() => navigate("/mypage")}
                 >
                   <User className="w-4 h-4 mr-2" />
-                  마이페이지
+                  {userProfile?.data.nickname || "마이페이지"}
                 </Button>
                 <Button
                   variant="ghost"
@@ -240,7 +261,7 @@ export function Header() {
                           onClick={() => handleNavigate("/mypage")}
                         >
                           <User className="w-4 h-4 mr-2" />
-                          마이페이지
+                          {userProfile?.data.nickname || "마이페이지"}
                         </Button>
                         <Button
                           variant="outline"

@@ -37,6 +37,7 @@ import {
   Gender,
   AuthResponse,
 } from "../api/auth";
+import { handleApiError } from "../api/errorHandler";
 
 export function SignupPage() {
   const navigate = useNavigate();
@@ -96,21 +97,25 @@ export function SignupPage() {
     setIsLoading(true);
 
     try {
-      await registerApi({
+      const auth = await registerApi({
         email: formData.email,
         password: formData.password,
-        nickname: formData.name,
+        nickname: formData.nickname || formData.name,
         name: formData.name,
         birthday: formData.birthday,
         gender: formData.gender as Gender
       });
 
-      alert("회원가입이 완료되었습니다. 이제 로그인해주세요.");
-      navigate("/login");
+      // 회원가입 성공 시 자동 로그인
+      login(auth);
+      navigate("/");
 
     } catch (err) {
       console.error(err);
-      alert("회원가입 실패");
+      // 토스트 알림 표시
+      const errorInfo = handleApiError(err);
+      // 폼 내부에도 에러 메시지 표시 (선택사항)
+      setError(errorInfo.message);
     } finally {
       setIsLoading(false);
     }

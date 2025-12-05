@@ -1,5 +1,6 @@
 // src/api/insight.ts
 import axios from "axios";
+import { handleApiError } from "./errorHandler";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
 
@@ -80,26 +81,41 @@ export async function fetchCalendar(
   startDate: string, // "YYYY-MM-DD"
   endDate: string    // "YYYY-MM-DD"
 ): Promise<InsightCalendarResponse> {
-  const res = await api.get<InsightCalendarResponse>("/api/v1/insights/calendar", {
-    params: { startDate, endDate },
-  });
-  return res.data;
+  try {
+    const res = await api.get<InsightCalendarResponse>("/api/v1/insights/calendar", {
+      params: { startDate, endDate },
+    });
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false); // 토스트는 호출하는 곳에서 처리
+    throw error;
+  }
 }
 
 // 하루 식사 조회
 export async function fetchDayMeals(
   date: string   // "YYYY-MM-DD"
 ): Promise<DayMealsResponse> {
-  const res = await api.get<DayMealsResponse>("/api/v1/meals/day", {
-    params: { date },
-  });
-  return res.data;
+  try {
+    const res = await api.get<DayMealsResponse>("/api/v1/meals/day", {
+      params: { date },
+    });
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false); // 토스트는 호출하는 곳에서 처리
+    throw error;
+  }
 }
 
 // 식사 로그 기록 (사진 분석 이후 호출)
 export async function createInsightLog(
   body: InsightLogRequest
 ): Promise<InsightLogResponse> {
-  const res = await api.post<InsightLogResponse>("/api/v1/insights/logs", body);
-  return res.data;
+  try {
+    const res = await api.post<InsightLogResponse>("/api/v1/insights/logs", body);
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false); // 토스트는 호출하는 곳에서 처리
+    throw error;
+  }
 }

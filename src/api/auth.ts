@@ -1,5 +1,6 @@
 // src/api/auth.ts
 import axios from "axios";
+import { handleApiError } from "./errorHandler";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
 
@@ -81,20 +82,35 @@ export interface SocialLoginRequest {
 
 // 로그인
 export async function loginApi(body: LoginRequest): Promise<AuthResponse> {
-  const res = await api.post<AuthResponse>("/api/v1/auth/login", body);
-  return res.data;
+  try {
+    const res = await api.post<AuthResponse>("/api/v1/auth/login", body);
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false); // 토스트는 호출하는 곳에서 처리
+    throw error;
+  }
 }
 
 // 회원가입
 export async function registerApi(body: RegisterRequest): Promise<AuthResponse> {
-  const res = await api.post<AuthResponse>("/api/v1/auth/register", body);
-  return res.data;
+  try {
+    const res = await api.post<AuthResponse>("/api/v1/auth/register", body);
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false); // 토스트는 호출하는 곳에서 처리
+    throw error;
+  }
 }
 
 // 토큰 재발급
 export async function refreshApi(body: RefreshRequest): Promise<AuthResponse> {
-  const res = await api.post<AuthResponse>("/api/v1/auth/refresh", body);
-  return res.data;
+  try {
+    const res = await api.post<AuthResponse>("/api/v1/auth/refresh", body);
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false); // 토스트는 호출하는 곳에서 처리
+    throw error;
+  }
 }
 
 // 로그아웃
@@ -102,18 +118,28 @@ export async function logoutApi(
   accessToken: string,
   body: RefreshRequest
 ): Promise<LogoutResponse> {
-  const res = await api.post<LogoutResponse>("/api/v1/auth/logout", body, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-  return res.data;
+  try {
+    const res = await api.post<LogoutResponse>("/api/v1/auth/logout", body, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false); // 토스트는 호출하는 곳에서 처리
+    throw error;
+  }
 }
 
 // 소셜 로그인
 export async function socialLoginApi(
   body: SocialLoginRequest
 ): Promise<AuthResponse> {
-  const res = await api.post<AuthResponse>("/api/v1/auth/social/login", body);
-  return res.data;
+  try {
+    const res = await api.post<AuthResponse>("/api/v1/auth/social/login", body);
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false); // 토스트는 호출하는 곳에서 처리
+    throw error;
+  }
 }

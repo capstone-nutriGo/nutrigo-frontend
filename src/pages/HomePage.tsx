@@ -1,6 +1,6 @@
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
-import { ArrowRight, Camera, Calendar, Trophy, Bot, TrendingUp, Sparkles, Search, Utensils, Salad } from "lucide-react";
+import { ArrowRight, Camera, Calendar, Trophy, Bot, TrendingUp, Sparkles, Search, Utensils, Salad, Zap, Flame, Target, CheckCircle, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { useState, useEffect } from "react";
@@ -13,6 +13,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
+import { fetchCalendar, fetchDayMeals } from "../api/insight";
+import { getProgress } from "../api/challenge";
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -22,6 +24,13 @@ export function HomePage() {
     message: "",
     suggestions: [] as string[]
   });
+  const [weekSummary, setWeekSummary] = useState({
+    avgCalories: 0,
+    redDays: 0,
+    challengesActive: 0,
+    recordedDays: 0
+  });
+  const [isLoadingWeekSummary, setIsLoadingWeekSummary] = useState(true);
 
   // 페이지 로드 시 전날 기록 체크
   useEffect(() => {
@@ -106,12 +115,81 @@ export function HomePage() {
     }
   ];
 
-  const weekSummary = {
-    avgCalories: 2050,
-    redDays: 2,
-    challengesActive: 2,
-    recordedDays: 5
-  };
+  // 이번 주 데이터 로드
+  useEffect(() => {
+    const loadWeekSummary = async () => {
+      try {
+        setIsLoadingWeekSummary(true);
+        
+        // 이번 주의 시작일(월요일)과 종료일(일요일) 계산
+        const today = new Date();
+        const dayOfWeek = today.getDay(); // 0(일요일) ~ 6(토요일)
+        const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // 월요일까지의 오프셋
+        const monday = new Date(today);
+        monday.setDate(today.getDate() + mondayOffset);
+        monday.setHours(0, 0, 0, 0);
+        
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        sunday.setHours(23, 59, 59, 999);
+        
+        const startDate = monday.toISOString().split('T')[0]; // "YYYY-MM-DD"
+        const endDate = sunday.toISOString().split('T')[0];
+        
+        // 병렬로 데이터 가져오기
+        const [calendarRes, progressRes] = await Promise.all([
+          fetchCalendar(startDate, endDate),
+          getProgress()
+        ]);
+        
+        const calendarDays = calendarRes.data.days;
+        
+        // 각 날짜의 상세 데이터 가져오기 (칼로리 계산용)
+        const dayMealsPromises = calendarDays.map(day => 
+          fetchDayMeals(day.date).catch(() => null) // 에러 발생 시 null 반환
+        );
+        const dayMealsResults = await Promise.all(dayMealsPromises);
+        
+        // 통계 계산
+        let totalCalories = 0;
+        let recordedDaysCount = 0;
+        let redDaysCount = 0;
+        
+        dayMealsResults.forEach((result, index) => {
+          if (result && result.data.totalKcal !== null && result.data.totalKcal !== undefined) {
+            totalCalories += result.data.totalKcal;
+            recordedDaysCount++;
+          }
+          
+          // 빨간 날 체크 (highlight가 BAD인 경우)
+          if (calendarDays[index]?.highlight === "BAD") {
+            redDaysCount++;
+          }
+        });
+        
+        const avgCalories = recordedDaysCount > 0 
+          ? Math.round(totalCalories / recordedDaysCount) 
+          : 0;
+        
+        // 진행 중 챌린지 개수
+        const challengesActive = progressRes.data.inProgress.length;
+        
+        setWeekSummary({
+          avgCalories,
+          redDays: redDaysCount,
+          challengesActive,
+          recordedDays: recordedDaysCount
+        });
+      } catch (error) {
+        console.error("주간 요약 데이터 로드 실패:", error);
+        // 에러 발생 시 기본값 유지
+      } finally {
+        setIsLoadingWeekSummary(false);
+      }
+    };
+    
+    loadWeekSummary();
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50/30 via-stone-50 to-lime-50/30">
@@ -137,52 +215,169 @@ export function HomePage() {
             transition={{ delay: 0.2, duration: 0.6 }}
             className="mb-12"
           >
-            <Card className="bg-gradient-to-br from-secondary to-emerald-600 text-white border-0">
+            <Card className="bg-gradient-to-br from-secondary via-emerald-500 to-emerald-600 text-white border-0 shadow-2xl">
               <CardContent className="pt-8 pb-8">
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-2xl flex items-center gap-2">
-                    <TrendingUp className="w-6 h-6" />
-                    이번 주 한눈에 보기
-                  </h2>
+                <div className="flex items-center justify-between mb-8">
+                  <div>
+                    <h2 className="text-4xl font-bold flex items-center gap-3 mb-2">
+                      <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
+                        <TrendingUp className="w-7 h-7" />
+                      </div>
+                      이번 주 한눈에 보기
+                    </h2>
+                    <p className="text-white/80 text-base ml-14">이번 주 식습관 요약</p>
+                  </div>
                   <Button
                     variant="secondary"
                     size="sm"
                     onClick={() => navigate('/insights')}
+                    className="bg-white/20 hover:bg-white/30 backdrop-blur-sm border-white/30"
                   >
                     자세히 보기
                     <ArrowRight className="w-4 h-4 ml-2" />
                   </Button>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-white/20 backdrop-blur-sm rounded-lg p-4">
-                    <p className="text-sm opacity-90 mb-1">평균 칼로리</p>
-                    <p className="text-3xl">{weekSummary.avgCalories}</p>
-                    <p className="text-xs opacity-75 mt-1">kcal/일</p>
+                {isLoadingWeekSummary ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div key={i} className="bg-white/25 backdrop-blur-md rounded-xl p-5 border border-white/30">
+                        <div className="flex items-center gap-4">
+                          <div className="flex-shrink-0">
+                            <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center">
+                              <Loader2 className="w-7 h-7 text-white/50 animate-spin" />
+                            </div>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="h-5 bg-white/20 rounded mb-2 animate-pulse"></div>
+                            <div className="h-12 bg-white/20 rounded mb-2 animate-pulse"></div>
+                            <div className="h-4 bg-white/20 rounded w-2/3 animate-pulse"></div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <div className="bg-white/20 backdrop-blur-sm rounded-lg p-4">
-                    <p className="text-sm opacity-90 mb-1">빨간 날</p>
-                    <p className="text-3xl">{weekSummary.redDays}</p>
-                    <p className="text-xs opacity-75 mt-1">고칼로리/나트륨</p>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: 0.1 }}
+                      className="bg-white/25 backdrop-blur-md rounded-xl p-5 border border-white/30 hover:bg-white/30 transition-all duration-300 hover:scale-105 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="flex-shrink-0">
+                          <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center">
+                            <Zap className="w-7 h-7 text-yellow-300" />
+                          </div>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="text-base opacity-90 font-semibold">평균 칼로리</p>
+                            <div className="w-2.5 h-2.5 bg-green-400 rounded-full animate-pulse"></div>
+                          </div>
+                          <p className="text-5xl font-bold mb-1">{weekSummary.avgCalories.toLocaleString()}</p>
+                          <p className="text-sm opacity-75">kcal/일</p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: 0.2 }}
+                    className="bg-white/25 backdrop-blur-md rounded-xl p-5 border border-white/30 hover:bg-white/30 transition-all duration-300 hover:scale-105 cursor-pointer"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="flex-shrink-0">
+                        <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center">
+                          <Flame className="w-7 h-7 text-red-300" />
+                        </div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-base opacity-90 font-semibold">빨간 날</p>
+                          <div className={`w-2.5 h-2.5 rounded-full ${weekSummary.redDays <= 2 ? 'bg-green-400' : weekSummary.redDays <= 4 ? 'bg-yellow-400' : 'bg-red-400'} animate-pulse`}></div>
+                        </div>
+                        <p className="text-5xl font-bold mb-1">{weekSummary.redDays}</p>
+                        <p className="text-sm opacity-75">고칼로리/나트륨</p>
+                      </div>
+                    </div>
+                  </motion.div>
+                  
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: 0.3 }}
+                    className="bg-white/25 backdrop-blur-md rounded-xl p-5 border border-white/30 hover:bg-white/30 transition-all duration-300 hover:scale-105 cursor-pointer"
+                    onClick={() => navigate('/challenges')}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="flex-shrink-0">
+                        <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center">
+                          <Trophy className="w-7 h-7 text-amber-300" />
+                        </div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-base opacity-90 font-semibold">진행 중 챌린지</p>
+                          <div className="w-2.5 h-2.5 bg-blue-400 rounded-full animate-pulse"></div>
+                        </div>
+                        <p className="text-5xl font-bold mb-1">{weekSummary.challengesActive}</p>
+                        <p className="text-sm opacity-75">개</p>
+                      </div>
+                    </div>
+                  </motion.div>
+                  
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: 0.4 }}
+                      className="bg-white/25 backdrop-blur-md rounded-xl p-5 border border-white/30 hover:bg-white/30 transition-all duration-300 hover:scale-105 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="flex-shrink-0">
+                          <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center">
+                            <CheckCircle className="w-7 h-7 text-green-300" />
+                          </div>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="text-base opacity-90 font-semibold">기록한 날</p>
+                            <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse"></div>
+                          </div>
+                          <p className="text-5xl font-bold mb-1">{weekSummary.recordedDays}</p>
+                          <p className="text-sm opacity-75 mb-2">일 / 7일</p>
+                          <div className="h-1.5 bg-white/20 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-white/60 rounded-full transition-all duration-500"
+                              style={{ width: `${(weekSummary.recordedDays / 7) * 100}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
                   </div>
-                  <div className="bg-white/20 backdrop-blur-sm rounded-lg p-4">
-                    <p className="text-sm opacity-90 mb-1">진행 중 챌린지</p>
-                    <p className="text-3xl">{weekSummary.challengesActive}</p>
-                    <p className="text-xs opacity-75 mt-1">개</p>
-                  </div>
-                  <div className="bg-white/20 backdrop-blur-sm rounded-lg p-4">
-                    <p className="text-sm opacity-90 mb-1">기록한 날</p>
-                    <p className="text-3xl">{weekSummary.recordedDays}</p>
-                    <p className="text-xs opacity-75 mt-1">일</p>
-                  </div>
-                </div>
+                )}
 
-                <div className="mt-6 bg-white/10 backdrop-blur-sm rounded-lg p-4">
-                  <p className="text-sm mb-2">💡 이번 주 팁</p>
-                  <p className="text-sm opacity-90">
-                    목요일과 토요일에 고칼로리 음식을 드셨네요. 다음 주에는 이 날들에 조금 더 가볍게 먹어보는 건 어떨까요? 😊
-                  </p>
-                </div>
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.5 }}
+                  className="bg-white/20 backdrop-blur-md rounded-xl p-6 border border-white/30"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="w-10 h-10 bg-yellow-400/30 rounded-full flex items-center justify-center flex-shrink-0">
+                      <Sparkles className="w-5 h-5 text-yellow-200" />
+                    </div>
+                    <div>
+                      <p className="text-base font-semibold mb-2">💡 이번 주 팁</p>
+                      <p className="text-base opacity-90 leading-relaxed">
+                        목요일과 토요일에 고칼로리 음식을 드셨네요. 다음 주에는 이 날들에 조금 더 가볍게 먹어보는 건 어떨까요? 😊
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
               </CardContent>
             </Card>
           </motion.div>

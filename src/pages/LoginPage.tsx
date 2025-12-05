@@ -10,6 +10,7 @@ import { Mail, Lock, ArrowRight, Chrome } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { loginApi } from "../api/auth";
+import { handleApiError } from "../api/errorHandler";
 
 
 export function LoginPage() {
@@ -39,8 +40,10 @@ export function LoginPage() {
       navigate("/");
     } catch (err: any) {
       console.error(err);
-      // 백엔드에서 message 내려주면 거기 맞춰서 바꿔도 됨
-      setError("이메일 또는 비밀번호가 올바르지 않습니다.");
+      // 토스트 알림 표시
+      const errorInfo = handleApiError(err);
+      // 폼 내부에도 에러 메시지 표시 (선택사항)
+      setError(errorInfo.message);
     } finally {
       setIsLoading(false);
     }
@@ -83,7 +86,10 @@ export function LoginPage() {
                     type="email"
                     placeholder="your@email.com"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (error) setError(null);
+                    }}
                     className="pl-10"
                     required
                   />
@@ -100,12 +106,22 @@ export function LoginPage() {
                     type="password"
                     placeholder="••••••••"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      if (error) setError(null);
+                    }}
                     className="pl-10"
                     required
                   />
                 </div>
               </div>
+
+              {/* 에러 메시지 */}
+              {error && (
+                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
 
               {/* 로그인 유지 & 비밀번호 찾기 */}
               <div className="flex items-center justify-between">
