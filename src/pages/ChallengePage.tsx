@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
@@ -21,209 +21,271 @@ import {
   Plus,
   Zap,
   Droplets,
-  X
+  X,
+  Loader2
 } from "lucide-react";
 import { motion } from "motion/react";
 import { toast } from "sonner@2.0.3";
+import { 
+  getChallenges, 
+  joinChallenge, 
+  getProgress, 
+  createCustomChallenge,
+  type ChallengeSummary,
+  type ChallengeCategory,
+  type ChallengeType,
+  type ChallengeStatus,
+  type InProgressChallenge,
+  type CompletedChallenge
+} from "../api/challenge";
+import { handleApiError } from "../api/errorHandler";
 
 interface Challenge {
-  id: string;
+  challengeId: number;
   title: string;
   description: string;
-  type: "redDays" | "calorie" | "sodium" | "streak" | "protein" | "custom";
-  duration: string;
+  type: ChallengeType;
+  category: ChallengeCategory;
+  durationDays: number;
   progress: number;
-  status: "active" | "completed" | "available";
+  status: ChallengeStatus;
   icon: any;
   goal: string;
   currentValue?: number;
   targetValue?: number;
   isCustom?: boolean;
+  progressValue?: number | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
 }
 
-// 기본 챌린지 목록
-const defaultChallenges: Challenge[] = [
-  {
-    id: "1",
-    title: "이번 주 빨간 날 3일 이하",
-    description: "고칼로리 또는 고나트륨으로 기록된 날을 3일 이하로 만들어요",
-    type: "redDays",
-    duration: "7일",
-    progress: 40,
-    status: "active",
-    icon: Target,
-    goal: "2일 / 3일 이하",
-    currentValue: 2,
-    targetValue: 3,
-    isCustom: false
-  },
-  {
-    id: "2",
-    title: "주간 평균 칼로리 10% 낮추기",
-    description: "지난주 대비 이번 주 평균 칼로리를 10% 낮춰요",
-    type: "calorie",
-    duration: "7일",
-    progress: 65,
-    status: "active",
-    icon: TrendingDown,
-    goal: "1,980kcal → 1,782kcal",
-    currentValue: 1850,
-    targetValue: 1782,
-    isCustom: false
-  },
-  {
-    id: "3",
-    title: "나트륨 상위 메뉴 1회 이하",
-    description: "고나트륨 메뉴를 이번 주에 1회만 먹도록 도전해요",
-    type: "sodium",
-    duration: "7일",
-    progress: 0,
-    status: "available",
-    icon: Flame,
-    goal: "0회 / 1회 이하",
-    currentValue: 0,
-    targetValue: 1,
-    isCustom: false
-  },
-  {
-    id: "4",
-    title: "3일 연속 적정 칼로리",
-    description: "3일 동안 연속으로 적정 칼로리를 유지해요",
-    type: "streak",
-    duration: "3일",
-    progress: 0,
-    status: "available",
-    icon: Calendar,
-    goal: "0일 / 3일",
-    currentValue: 0,
-    targetValue: 3,
-    isCustom: false
-  },
-  {
-    id: "5",
-    title: "주 5회 녹색 날 만들기",
-    description: "이번 주에 5일은 녹색(적정)으로 기록되도록 노력해요",
-    type: "redDays",
-    duration: "7일",
-    progress: 0,
-    status: "available",
-    icon: Star,
-    goal: "0일 / 5일",
-    currentValue: 0,
-    targetValue: 5,
-    isCustom: false
+// 타입별 아이콘 매핑
+const getTypeIcon = (type: ChallengeType) => {
+  switch (type) {
+    case "kcal":
+      return Zap;
+    case "sodium":
+      return Droplets;
+    case "frequency":
+      return Target;
+    case "day_color":
+      return Star;
+    case "delivery_count":
+      return Calendar;
+    case "custom":
+      return Trophy;
+    default:
+      return Target;
   }
-];
+};
 
-const completedChallenges: Challenge[] = [
-  {
-    id: "c1",
-    title: "지난 주 빨간 날 3일 이하",
-    description: "고칼로리 또는 고나트륨으로 기록된 날을 3일 이하로 만들었어요",
-    type: "redDays",
-    duration: "7일",
-    progress: 100,
-    status: "completed",
-    icon: Trophy,
-    goal: "2일 / 3일 이하",
-    currentValue: 2,
-    targetValue: 3,
-    isCustom: false
-  },
-  {
-    id: "c2",
-    title: "2일 연속 적정 칼로리",
-    description: "2일 동안 연속으로 적정 칼로리를 유지했어요",
-    type: "streak",
-    duration: "2일",
-    progress: 100,
-    status: "completed",
-    icon: CheckCircle2,
-    goal: "2일 / 2일",
-    currentValue: 2,
-    targetValue: 2,
-    isCustom: false
+// 상태를 프론트엔드 형식으로 변환
+const mapStatus = (status: ChallengeStatus): "active" | "completed" | "available" => {
+  // 백엔드에서 반환하는 실제 값: "available", "in-progress", "done"
+  const statusLower = status?.toLowerCase();
+  if (statusLower === "in-progress" || statusLower === "in_progress" || status === "IN_PROGRESS") {
+    return "active";
   }
-];
+  if (statusLower === "done" || statusLower === "completed" || status === "COMPLETED" || status === "FAILED") {
+    return "completed";
+  }
+  return "available";
+};
+
+// 백엔드 데이터를 프론트엔드 형식으로 변환
+const mapChallenge = (summary: ChallengeSummary): Challenge => {
+  const status = mapStatus(summary.status);
+  const progress = summary.progressValue ? Math.round(summary.progressValue) : 0;
+  
+  return {
+    challengeId: summary.challengeId,
+    title: summary.title,
+    description: summary.description || "",
+    type: summary.type,
+    category: summary.category,
+    durationDays: summary.durationDays,
+    progress,
+    status,
+    icon: getTypeIcon(summary.type),
+    goal: `${progress}%`,
+    progressValue: summary.progressValue,
+    startedAt: summary.startedAt,
+    endedAt: summary.endedAt,
+    isCustom: summary.type === "custom"
+  };
+};
 
 export function ChallengePage() {
-  const [activeChallenges, setActiveChallenges] = useState(defaultChallenges);
+  const [inProgressChallenges, setInProgressChallenges] = useState<Challenge[]>([]);
+  const [availableChallenges, setAvailableChallenges] = useState<Challenge[]>([]);
+  const [completedChallenges, setCompletedChallenges] = useState<Challenge[]>([]);
+  const [loading, setLoading] = useState(true);
   
   // 챌린지 생성 다이얼로그 상태
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newChallengeName, setNewChallengeName] = useState("");
-  const [newChallengeType, setNewChallengeType] = useState<"calorie" | "sodium" | "protein">("calorie");
+  const [newChallengeDescription, setNewChallengeDescription] = useState("");
+  const [newChallengeCategory, setNewChallengeCategory] = useState<ChallengeCategory>("HEALTH");
+  const [newChallengeType, setNewChallengeType] = useState<ChallengeType>("kcal");
   const [newChallengeGoal, setNewChallengeGoal] = useState([1800]);
   const [newChallengeDuration, setNewChallengeDuration] = useState("7");
+  const [creating, setCreating] = useState(false);
 
-  const getTypeInfo = (type: string) => {
+  // 챌린지 목록 로드
+  useEffect(() => {
+    loadChallenges();
+  }, []);
+
+  const loadChallenges = async () => {
+    try {
+      setLoading(true);
+      
+      // 전체 챌린지 목록 조회
+      const [allChallengesRes, progressRes] = await Promise.all([
+        getChallenges().catch((error) => {
+          console.error("챌린지 목록 조회 실패:", error);
+          // 에러가 발생해도 빈 배열 반환하여 화면이 뜨도록 함
+          return { success: true, data: { challenges: [] } };
+        }),
+        getProgress().catch(() => null) // 진행 상황은 선택사항
+      ]);
+
+      const allChallenges = allChallengesRes.data.challenges.map(mapChallenge);
+      
+      // 진행 상황 데이터가 있으면 병합
+      if (progressRes) {
+        const inProgressIds = new Set(progressRes.data.inProgress.map(c => c.challengeId));
+        const completedIds = new Set(progressRes.data.done.map(c => c.challengeId));
+        
+        // 진행 중인 챌린지에 진행률 업데이트
+        progressRes.data.inProgress.forEach(progress => {
+          const challenge = allChallenges.find(c => c.challengeId === progress.challengeId);
+          if (challenge) {
+            challenge.progress = progress.progressRate;
+            // mapStatus를 사용하여 변환된 상태로 설정
+            challenge.status = mapStatus("in-progress" as ChallengeStatus);
+          }
+        });
+        
+        // 완료된 챌린지 업데이트
+        progressRes.data.done.forEach(completed => {
+          const challenge = allChallenges.find(c => c.challengeId === completed.challengeId);
+          if (challenge) {
+            // mapStatus를 사용하여 변환된 상태로 설정
+            challenge.status = mapStatus("done" as ChallengeStatus);
+            challenge.progress = 100;
+          }
+        });
+      }
+      
+      // 진행 중인 챌린지, 추천 챌린지, 완료된 챌린지 분리
+      const inProgress = allChallenges.filter(c => c.status === "active");
+      const available = allChallenges.filter(c => c.status === "available");
+      const completed = allChallenges.filter(c => c.status === "completed");
+      
+      setInProgressChallenges(inProgress);
+      setAvailableChallenges(available);
+      setCompletedChallenges(completed);
+    } catch (error) {
+      console.error("챌린지 로드 실패:", error);
+      handleApiError(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getTypeInfo = (type: ChallengeType) => {
     switch (type) {
-      case "calorie":
+      case "kcal":
         return { label: "칼로리", icon: Zap, color: "orange", min: 1200, max: 3000, step: 100, defaultGoal: 1800, unit: "kcal" };
       case "sodium":
         return { label: "나트륨", icon: Droplets, color: "stone", min: 1000, max: 3000, step: 100, defaultGoal: 2000, unit: "mg" };
-      case "protein":
-        return { label: "단백질", icon: Flame, color: "green", min: 50, max: 200, step: 10, defaultGoal: 100, unit: "g" };
+      case "frequency":
+        return { label: "횟수", icon: Target, color: "green", min: 1, max: 30, step: 1, defaultGoal: 5, unit: "회" };
+      case "day_color":
+        return { label: "날 색상", icon: Star, color: "blue", min: 1, max: 30, step: 1, defaultGoal: 5, unit: "일" };
+      case "delivery_count":
+        return { label: "배달 횟수", icon: Calendar, color: "purple", min: 1, max: 30, step: 1, defaultGoal: 3, unit: "회" };
+      case "custom":
+        return { label: "커스텀", icon: Target, color: "accent", min: 0, max: 1000, step: 10, defaultGoal: 100, unit: "" };
       default:
         return { label: "커스텀", icon: Target, color: "accent", min: 0, max: 1000, step: 10, defaultGoal: 100, unit: "" };
     }
   };
 
-  const handleCreateChallenge = () => {
+  const handleCreateChallenge = async () => {
     if (!newChallengeName.trim()) {
       toast.error("챌린지 이름을 입력해주세요!");
       return;
     }
 
-    const typeInfo = getTypeInfo(newChallengeType);
-    const newChallenge: Challenge = {
-      id: Date.now().toString(),
-      title: newChallengeName,
-      description: `${typeInfo.label} 목표를 달성하기 위한 나만의 챌린지예요`,
-      type: newChallengeType,
-      duration: `${newChallengeDuration}일`,
-      progress: 0,
-      status: "active",
-      icon: typeInfo.icon,
-      goal: `0 / ${newChallengeGoal[0]} ${typeInfo.unit}`,
-      currentValue: 0,
-      targetValue: newChallengeGoal[0],
-      isCustom: true
-    };
+    try {
+      setCreating(true);
+      const typeInfo = getTypeInfo(newChallengeType);
+      
+      const request = {
+        title: newChallengeName,
+        description: newChallengeDescription || `${typeInfo.label} 목표를 달성하기 위한 나만의 챌린지예요`,
+        category: newChallengeCategory,
+        type: newChallengeType,
+        durationDays: parseInt(newChallengeDuration),
+        goal: {
+          ...(newChallengeType === "kcal" && { maxKcalPerMeal: newChallengeGoal[0] }),
+          ...(newChallengeType === "sodium" && { maxSodiumMgPerMeal: newChallengeGoal[0] }),
+          ...(newChallengeType === "frequency" && { targetCount: newChallengeGoal[0] }),
+          ...(newChallengeType === "custom" && { customDescription: `목표: ${newChallengeGoal[0]} ${typeInfo.unit}` })
+        }
+      };
 
-    setActiveChallenges([newChallenge, ...activeChallenges]);
-    toast.success(`"${newChallengeName}" 챌린지가 생성되었어요! 🎉`);
+      const response = await createCustomChallenge(request);
+      toast.success(`"${newChallengeName}" 챌린지가 생성되었어요! 🎉`);
+      
+      // 챌린지 목록 다시 로드
+      await loadChallenges();
 
-    // 초기화
-    setNewChallengeName("");
-    setNewChallengeType("calorie");
-    setNewChallengeGoal([1800]);
-    setNewChallengeDuration("7");
-    setIsDialogOpen(false);
+      // 초기화
+      setNewChallengeName("");
+      setNewChallengeDescription("");
+      setNewChallengeCategory("HEALTH");
+      setNewChallengeType("kcal");
+      const defaultTypeInfo = getTypeInfo("kcal");
+      setNewChallengeGoal([defaultTypeInfo.defaultGoal]);
+      setNewChallengeDuration("7");
+      setIsDialogOpen(false);
+    } catch (error) {
+      console.error("챌린지 생성 실패:", error);
+      handleApiError(error);
+    } finally {
+      setCreating(false);
+    }
   };
 
-  const handleStartChallenge = (challengeId: string) => {
-    setActiveChallenges(prevChallenges =>
-      prevChallenges.map(challenge =>
-        challenge.id === challengeId
-          ? { ...challenge, status: "active" as const }
-          : challenge
-      )
-    );
-    toast.success("챌린지를 시작했어요! 화이팅 💪");
+  const handleStartChallenge = async (challengeId: number) => {
+    try {
+      const response = await joinChallenge(challengeId);
+      toast.success("챌린지를 시작했어요! 화이팅 💪");
+      
+      // 챌린지 목록 다시 로드
+      await loadChallenges();
+    } catch (error) {
+      console.error("챌린지 시작 실패:", error);
+      handleApiError(error);
+    }
   };
 
-  const handleDeleteChallenge = (challengeId: string) => {
-    setActiveChallenges(prevChallenges =>
-      prevChallenges.filter(challenge => challenge.id !== challengeId)
-    );
-    toast.success("챌린지가 삭제되었어요");
+  const handleDeleteChallenge = (challengeId: number) => {
+    // TODO: 백엔드에 삭제 API가 있으면 구현
+    toast.info("챌린지 삭제 기능은 준비 중이에요");
   };
 
-  const getDifficultyBadge = (type: string) => {
-    if (type === "redDays" || type === "streak") {
+  const getDifficultyBadge = (type: ChallengeType, category: ChallengeCategory) => {
+    if (category === "FUN") {
+      return <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-300">재미</Badge>;
+    }
+    
+    if (type === "day_color" || type === "frequency") {
       return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-300">중간</Badge>;
-    } else if (type === "calorie") {
+    } else if (type === "kcal") {
       return <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-300">도전</Badge>;
     } else {
       return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">쉬움</Badge>;
@@ -281,10 +343,37 @@ export function ChallengePage() {
                       />
                     </div>
 
+                    {/* 챌린지 설명 */}
+                    <div className="space-y-2">
+                      <Label htmlFor="challenge-description">챌린지 설명 (선택)</Label>
+                      <Input
+                        id="challenge-description"
+                        placeholder="챌린지에 대한 설명을 입력해주세요"
+                        value={newChallengeDescription}
+                        onChange={(e) => setNewChallengeDescription(e.target.value)}
+                      />
+                    </div>
+
+                    {/* 챌린지 카테고리 */}
+                    <div className="space-y-2">
+                      <Label>챌린지 카테고리</Label>
+                      <Select value={newChallengeCategory} onValueChange={(value: ChallengeCategory) => {
+                        setNewChallengeCategory(value);
+                      }}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="HEALTH">건강</SelectItem>
+                          <SelectItem value="FUN">재미</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
                     {/* 챌린지 유형 */}
                     <div className="space-y-2">
                       <Label>챌린지 유형</Label>
-                      <Select value={newChallengeType} onValueChange={(value: any) => {
+                      <Select value={newChallengeType} onValueChange={(value: ChallengeType) => {
                         setNewChallengeType(value);
                         const typeInfo = getTypeInfo(value);
                         setNewChallengeGoal([typeInfo.defaultGoal]);
@@ -293,7 +382,7 @@ export function ChallengePage() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="calorie">
+                          <SelectItem value="kcal">
                             <div className="flex items-center gap-2">
                               <Zap className="w-4 h-4 text-primary" />
                               칼로리 목표
@@ -305,10 +394,28 @@ export function ChallengePage() {
                               나트륨 제한
                             </div>
                           </SelectItem>
-                          <SelectItem value="protein">
+                          <SelectItem value="frequency">
                             <div className="flex items-center gap-2">
-                              <Flame className="w-4 h-4 text-secondary" />
-                              단백질 섭취
+                              <Target className="w-4 h-4 text-green-600" />
+                              횟수 목표
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="day_color">
+                            <div className="flex items-center gap-2">
+                              <Star className="w-4 h-4 text-blue-600" />
+                              날 색상 목표
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="delivery_count">
+                            <div className="flex items-center gap-2">
+                              <Calendar className="w-4 h-4 text-purple-600" />
+                              배달 횟수 제한
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="custom">
+                            <div className="flex items-center gap-2">
+                              <Trophy className="w-4 h-4 text-amber-600" />
+                              커스텀
                             </div>
                           </SelectItem>
                         </SelectContent>
@@ -355,12 +462,21 @@ export function ChallengePage() {
                   </div>
 
                   <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+                    <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={creating}>
                       취소
                     </Button>
-                    <Button onClick={handleCreateChallenge}>
-                      <Trophy className="w-4 h-4 mr-2" />
-                      챌린지 시작하기
+                    <Button onClick={handleCreateChallenge} disabled={creating}>
+                      {creating ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          생성 중...
+                        </>
+                      ) : (
+                        <>
+                          <Trophy className="w-4 h-4 mr-2" />
+                          챌린지 시작하기
+                        </>
+                      )}
                     </Button>
                   </DialogFooter>
                 </DialogContent>
@@ -375,65 +491,65 @@ export function ChallengePage() {
 
               {/* 진행 중 & 추천 챌린지 */}
               <TabsContent value="active">
-                <div className="grid gap-6">
-                  {activeChallenges.map((challenge, index) => (
-                    <motion.div
-                      key={challenge.id}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.1 }}
-                    >
-                      <Card className={
-                        challenge.status === "active" 
-                          ? "border-green-300 bg-green-50/30 hover:shadow-lg transition-shadow" 
-                          : "hover:shadow-lg transition-shadow"
-                      }>
-                        <CardHeader>
-                          <div className="flex items-start justify-between">
-                            <div className="flex items-start gap-3 flex-1">
-                              <div className={`p-3 rounded-lg ${
-                                challenge.status === "active" 
-                                  ? "bg-green-100" 
-                                  : "bg-amber-50"
-                              }`}>
-                                <challenge.icon className={`w-6 h-6 ${
-                                  challenge.status === "active" 
-                                    ? "text-secondary" 
-                                    : "text-accent"
-                                }`} />
-                              </div>
-                              <div className="flex-1">
-                                <div className="flex items-start justify-between gap-2">
-                                  <CardTitle className="mb-2">{challenge.title}</CardTitle>
-                                  {challenge.isCustom && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => handleDeleteChallenge(challenge.id)}
-                                      className="text-muted-foreground hover:text-destructive -mt-1"
-                                    >
-                                      <X className="w-4 h-4" />
-                                    </Button>
-                                  )}
+                {loading ? (
+                  <div className="flex justify-center items-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <div className="space-y-8">
+                    {/* 진행 중인 챌린지 */}
+                    {inProgressChallenges.length > 0 && (
+                      <div>
+                        <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+                          <Target className="w-6 h-6 text-green-600" />
+                          진행 중인 챌린지
+                        </h2>
+                        <div className="grid gap-6">
+                          {inProgressChallenges.map((challenge, index) => (
+                            <motion.div
+                              key={challenge.challengeId}
+                              initial={{ opacity: 0, x: -20 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: index * 0.1 }}
+                            >
+                              <Card className="border-green-300 bg-green-50/30 hover:shadow-lg transition-shadow">
+                          <CardHeader>
+                            <div className="flex items-start justify-between">
+                              <div className="flex items-start gap-3 flex-1">
+                                <div className="p-3 rounded-lg bg-green-100">
+                                  <challenge.icon className="w-6 h-6 text-secondary" />
                                 </div>
-                                <CardDescription>{challenge.description}</CardDescription>
+                                <div className="flex-1">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <CardTitle className="mb-2">{challenge.title}</CardTitle>
+                                    {challenge.isCustom && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleDeleteChallenge(challenge.challengeId)}
+                                        className="text-muted-foreground hover:text-destructive -mt-1"
+                                      >
+                                        <X className="w-4 h-4" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                  <CardDescription>{challenge.description}</CardDescription>
+                                </div>
                               </div>
+                              {!challenge.isCustom && getDifficultyBadge(challenge.type, challenge.category)}
                             </div>
-                            {!challenge.isCustom && getDifficultyBadge(challenge.type)}
-                          </div>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                          {/* 목표 */}
-                          <div className="flex items-center justify-between text-sm">
-                            <div className="flex items-center gap-2">
-                              <Calendar className="w-4 h-4 text-muted-foreground" />
-                              <span className="text-muted-foreground">기간: {challenge.duration}</span>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            {/* 목표 */}
+                            <div className="flex items-center justify-between text-sm">
+                              <div className="flex items-center gap-2">
+                                <Calendar className="w-4 h-4 text-muted-foreground" />
+                                <span className="text-muted-foreground">기간: {challenge.durationDays}일</span>
+                              </div>
+                              <span className="text-muted-foreground">진행률: {challenge.progress}%</span>
                             </div>
-                            <span className="text-muted-foreground">목표: {challenge.goal}</span>
-                          </div>
 
-                          {/* 진행도 */}
-                          {challenge.status === "active" && (
+                            {/* 진행도 */}
                             <div className="space-y-2">
                               <div className="flex justify-between text-sm">
                                 <span>진행률</span>
@@ -441,31 +557,92 @@ export function ChallengePage() {
                               </div>
                               <Progress value={challenge.progress} className="h-2 bg-green-100" />
                             </div>
-                          )}
 
-                          {/* 액션 버튼 */}
-                          {challenge.status === "available" && (
-                            <Button 
-                              className="w-full"
-                              onClick={() => handleStartChallenge(challenge.id)}
-                            >
-                              <Sparkles className="w-4 h-4 mr-2" />
-                              챌린지 시작하기
-                            </Button>
-                          )}
-
-                          {challenge.status === "active" && (
+                            {/* 진행 중 메시지 */}
                             <div className="bg-green-100 border border-green-300 rounded-lg p-3 text-center">
                               <p className="text-sm text-green-900">
                                 진행 중이에요! 계속 화이팅! 💪
                               </p>
                             </div>
-                          )}
+                          </CardContent>
+                        </Card>
+                      </motion.div>
+                    ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 추천 챌린지 */}
+                    {availableChallenges.length > 0 && (
+                      <div>
+                        <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+                          <Sparkles className="w-6 h-6 text-amber-600" />
+                          추천 챌린지
+                        </h2>
+                        <div className="grid gap-6">
+                          {availableChallenges.map((challenge, index) => (
+                            <motion.div
+                              key={challenge.challengeId}
+                              initial={{ opacity: 0, x: -20 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: index * 0.1 }}
+                            >
+                              <Card className="hover:shadow-lg transition-shadow">
+                                <CardHeader>
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex items-start gap-3 flex-1">
+                                      <div className="p-3 rounded-lg bg-amber-50">
+                                        <challenge.icon className="w-6 h-6 text-accent" />
+                                      </div>
+                                      <div className="flex-1">
+                                        <div className="flex items-start justify-between gap-2">
+                                          <CardTitle className="mb-2">{challenge.title}</CardTitle>
+                                        </div>
+                                        <CardDescription>{challenge.description}</CardDescription>
+                                      </div>
+                                    </div>
+                                    {!challenge.isCustom && getDifficultyBadge(challenge.type, challenge.category)}
+                                  </div>
+                                </CardHeader>
+                                <CardContent className="space-y-4">
+                                  {/* 목표 */}
+                                  <div className="flex items-center justify-between text-sm">
+                                    <div className="flex items-center gap-2">
+                                      <Calendar className="w-4 h-4 text-muted-foreground" />
+                                      <span className="text-muted-foreground">기간: {challenge.durationDays}일</span>
+                                    </div>
+                                  </div>
+
+                                  {/* 액션 버튼 */}
+                                  <Button 
+                                    className="w-full"
+                                    onClick={() => handleStartChallenge(challenge.challengeId)}
+                                  >
+                                    <Sparkles className="w-4 h-4 mr-2" />
+                                    챌린지 시작하기
+                                  </Button>
+                                </CardContent>
+                              </Card>
+                            </motion.div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 빈 상태 */}
+                    {inProgressChallenges.length === 0 && availableChallenges.length === 0 && (
+                      <Card>
+                        <CardContent className="pt-12 pb-12 text-center">
+                          <Target className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                          <p className="text-muted-foreground mb-2">진행 중인 챌린지가 없어요</p>
+                          <p className="text-sm text-muted-foreground">
+                            지금 바로 챌린지를 시작해보세요!
+                          </p>
                         </CardContent>
                       </Card>
-                    </motion.div>
-                  ))}
-                </div>
+                    )}
+                  </div>
+                )}
 
                 {/* 안내 메시지 */}
                 <Card className="mt-8 bg-green-50/50 border-green-200">
@@ -487,11 +664,15 @@ export function ChallengePage() {
 
               {/* 완료한 챌린지 */}
               <TabsContent value="completed">
-                {completedChallenges.length > 0 ? (
+                {loading ? (
+                  <div className="flex justify-center items-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : completedChallenges.length > 0 ? (
                   <div className="grid gap-6">
                     {completedChallenges.map((challenge, index) => (
                       <motion.div
-                        key={challenge.id}
+                        key={challenge.challengeId}
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: index * 0.1 }}
@@ -515,7 +696,7 @@ export function ChallengePage() {
                           </CardHeader>
                           <CardContent className="space-y-4">
                             <div className="flex items-center justify-between text-sm">
-                              <span className="text-muted-foreground">달성: {challenge.goal}</span>
+                              <span className="text-muted-foreground">기간: {challenge.durationDays}일</span>
                               <span className="text-green-600">100% 완료</span>
                             </div>
 

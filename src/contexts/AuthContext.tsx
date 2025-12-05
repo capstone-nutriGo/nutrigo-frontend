@@ -1,31 +1,42 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+// src/contexts/AuthContext.tsx
+import {
+  createContext,
+  useContext,
+  useState,
+  ReactNode,
+} from "react";
+import type { AuthResponse, TokenData } from "../api/auth";
 
 interface AuthContextType {
   isLoggedIn: boolean;
-  login: () => void;
+  tokenData: TokenData | null;
+  login: (data: AuthResponse) => void;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [isLoggedIn, setIsLoggedIn] = useState(() => {
-    // 로컬 스토리지에서 로그인 상태 확인
-    return localStorage.getItem('isLoggedIn') === 'true';
+  const [tokenData, setTokenData] = useState<TokenData | null>(() => {
+    const saved = localStorage.getItem("tokenData");
+    return saved ? (JSON.parse(saved) as TokenData) : null;
   });
 
-  const login = () => {
-    setIsLoggedIn(true);
-    localStorage.setItem('isLoggedIn', 'true');
+  const isLoggedIn = !!tokenData?.accessToken;
+
+  const login = (auth: AuthResponse) => {
+    const data = auth.data;
+    setTokenData(data);
+    localStorage.setItem("tokenData", JSON.stringify(data));
   };
 
   const logout = () => {
-    setIsLoggedIn(false);
-    localStorage.removeItem('isLoggedIn');
+    setTokenData(null);
+    localStorage.removeItem("tokenData");
   };
 
   return (
-    <AuthContext.Provider value={{ isLoggedIn, login, logout }}>
+    <AuthContext.Provider value={{ isLoggedIn, tokenData, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
@@ -34,7 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
 }

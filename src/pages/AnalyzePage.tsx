@@ -1,18 +1,31 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
-import { Camera, Upload, X, Loader2, Calendar, CheckCircle, AlertCircle, Sparkles } from "lucide-react";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
+import { Camera, Upload, X, Loader2, Calendar, CheckCircle, AlertCircle, Sparkles, Type, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner@2.0.3";
 import { motion } from "motion/react";
+import { Textarea } from "../components/ui/textarea";
+import { Slider } from "../components/ui/slider";
 
 interface MealRecord {
   id: string;
   date: string;
   time: string;
+  mealTime: "아침" | "점심" | "저녁" | "야식";
   items: {
     name: string;
     restaurant: string;
+    consumption: number; // 0-100, 섭취량 (%)
   }[];
   nutrition: {
     calories: number;
@@ -30,14 +43,21 @@ export function AnalyzePage() {
   const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<MealRecord | null>(null);
+  const [mealDate, setMealDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [mealTime, setMealTime] = useState<"아침" | "점심" | "저녁" | "야식">("점심");
+  const [inputMode, setInputMode] = useState<"photo" | "text">("photo");
+  const [textMealItems, setTextMealItems] = useState<Array<{ name: string; restaurant: string }>>([
+    { name: "", restaurant: "" }
+  ]);
   const [recentRecords, setRecentRecords] = useState<MealRecord[]>([
     {
       id: "1",
       date: "2025-11-27",
       time: "19:30",
+      mealTime: "저녁",
       items: [
-        { name: "치킨", restaurant: "치킨플러스" },
-        { name: "라 1.5L", restaurant: "치킨플러스" }
+        { name: "치킨", restaurant: "치킨플러스", consumption: 100 },
+        { name: "라 1.5L", restaurant: "치킨플러스", consumption: 100 }
       ],
       nutrition: {
         calories: 1850,
@@ -53,8 +73,9 @@ export function AnalyzePage() {
       id: "2",
       date: "2025-11-26",
       time: "12:20",
+      mealTime: "점심",
       items: [
-        { name: "비빔밥", restaurant: "한식당" }
+        { name: "비빔밥", restaurant: "한식당", consumption: 100 }
       ],
       nutrition: {
         calories: 650,
@@ -77,10 +98,34 @@ export function AnalyzePage() {
     }
   };
 
+  const getTimeByMealTime = (mealTime: "아침" | "점심" | "저녁" | "야식"): string => {
+    const now = new Date();
+    switch (mealTime) {
+      case "아침":
+        return "08:00";
+      case "점심":
+        return "12:30";
+      case "저녁":
+        return "19:00";
+      case "야식":
+        return "22:00";
+      default:
+        return now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+    }
+  };
+
   const handleAnalyze = async () => {
-    if (!screenshot) {
+    if (inputMode === "photo" && !screenshot) {
       toast.error("먼저 사진을 업로드해주세요!");
       return;
+    }
+
+    if (inputMode === "text") {
+      const validItems = textMealItems.filter(item => item.name.trim() !== "");
+      if (validItems.length === 0) {
+        toast.error("먼저 음식 이름을 입력해주세요!");
+        return;
+      }
     }
 
     setIsAnalyzing(true);
@@ -88,15 +133,23 @@ export function AnalyzePage() {
     // AI 분석 시뮬레이션
     await new Promise((resolve) => setTimeout(resolve, 2500));
 
+    // 텍스트 입력 모드인 경우 입력한 음식 정보 사용 (기본 섭취량 100%로 설정)
+    const items = inputMode === "text" 
+      ? textMealItems
+          .filter(item => item.name.trim() !== "")
+          .map(item => ({ ...item, consumption: 100 }))
+      : [
+          { name: "까르보나라 파스타", restaurant: "파스타 하우스", consumption: 100 },
+          { name: "콜라", restaurant: "파스타 하우스", consumption: 100 }
+        ];
+
     // 모의 분석 결과
     const mockResult: MealRecord = {
       id: Date.now().toString(),
-      date: new Date().toISOString().split('T')[0],
-      time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
-      items: [
-        { name: "까르보나라 파스타", restaurant: "파스타 하우스" },
-        { name: "콜라", restaurant: "파스타 하우스" }
-      ],
+      date: mealDate,
+      time: getTimeByMealTime(mealTime),
+      mealTime: mealTime,
+      items: items,
       nutrition: {
         calories: 980,
         protein: 32,
@@ -105,7 +158,7 @@ export function AnalyzePage() {
       },
       sodiumLevel: "고나트륨",
       calorieLevel: "과식",
-      imageName: screenshot.name
+      imageName: inputMode === "photo" ? screenshot?.name || "" : "text_input"
     };
 
     setAnalysisResult(mockResult);
@@ -123,6 +176,36 @@ export function AnalyzePage() {
     setScreenshot(null);
     setScreenshotPreview(null);
     setAnalysisResult(null);
+    setMealDate(new Date().toISOString().split('T')[0]);
+    setMealTime("점심");
+    setTextMealItems([{ name: "", restaurant: "" }]);
+  };
+
+  const addMealItem = () => {
+    setTextMealItems([...textMealItems, { name: "", restaurant: "" }]);
+  };
+
+  const removeMealItem = (index: number) => {
+    if (textMealItems.length > 1) {
+      setTextMealItems(textMealItems.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateMealItem = (index: number, field: "name" | "restaurant", value: string) => {
+    const updated = [...textMealItems];
+    updated[index] = { ...updated[index], [field]: value };
+    setTextMealItems(updated);
+  };
+
+  const updateAnalysisItemConsumption = (index: number, consumption: number) => {
+    if (!analysisResult) return;
+    const updated = { ...analysisResult };
+    const currentItem = updated.items[index];
+    updated.items[index] = { 
+      ...currentItem, 
+      consumption: consumption ?? 100 
+    };
+    setAnalysisResult(updated);
   };
 
   const getSodiumColor = (level: string) => {
@@ -161,44 +244,132 @@ export function AnalyzePage() {
             {/* 업로드 카드 */}
             <Card className="mb-8">
               <CardHeader>
-                <CardTitle>스크린샷 업로드</CardTitle>
+                <CardTitle>식사 기록하기</CardTitle>
                 <CardDescription>
-                  배달앱 주문 완료 화면을 찍어서 올려주세요
+                  사진을 업로드하거나 텍스트로 직접 입력할 수 있어요
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                {/* 업로드 영역 */}
-                <div className="border-2 border-dashed border-green-300 rounded-lg p-8 text-center hover:border-secondary transition-colors cursor-pointer bg-green-50/30">
-                  <label htmlFor="screenshot-upload" className="cursor-pointer">
-                    <div className="flex flex-col items-center gap-4">
-                      <div className="w-20 h-20 bg-gradient-to-br from-secondary to-emerald-600 rounded-full flex items-center justify-center">
-                        <Camera className="w-10 h-10 text-white" />
-                      </div>
-                      <div>
-                        <p className="mb-2">클릭하여 사진을 선택하세요</p>
-                        <p className="text-sm text-muted-foreground">
-                          JPG, PNG 파일을 업로드할 수 있어요
-                        </p>
-                      </div>
-                      {!screenshotPreview && (
-                        <Button type="button" variant="outline">
-                          <Upload className="w-4 h-4 mr-2" />
-                          파일 선택
-                        </Button>
-                      )}
-                    </div>
-                  </label>
-                  <input
-                    id="screenshot-upload"
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    className="hidden"
-                  />
+                {/* 입력 모드 선택 */}
+                <div className="flex gap-2 border-b pb-4">
+                  <Button
+                    type="button"
+                    variant={inputMode === "photo" ? "default" : "outline"}
+                    onClick={() => {
+                      setInputMode("photo");
+                      setTextMealItems([{ name: "", restaurant: "" }]);
+                    }}
+                    className="flex-1"
+                  >
+                    <Camera className="w-4 h-4 mr-2" />
+                    사진 업로드
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={inputMode === "text" ? "default" : "outline"}
+                    onClick={() => {
+                      setInputMode("text");
+                      setScreenshot(null);
+                      setScreenshotPreview(null);
+                    }}
+                    className="flex-1"
+                  >
+                    <Type className="w-4 h-4 mr-2" />
+                    텍스트 입력
+                  </Button>
                 </div>
+                {/* 사진 업로드 모드 */}
+                {inputMode === "photo" && (
+                  <div className="border-2 border-dashed border-green-300 rounded-lg p-8 text-center hover:border-secondary transition-colors cursor-pointer bg-green-50/30">
+                    <label htmlFor="screenshot-upload" className="cursor-pointer">
+                      <div className="flex flex-col items-center gap-4">
+                        <div className="w-20 h-20 bg-gradient-to-br from-secondary to-emerald-600 rounded-full flex items-center justify-center">
+                          <Camera className="w-10 h-10 text-white" />
+                        </div>
+                        <div>
+                          <p className="mb-2">클릭하여 사진을 선택하세요</p>
+                          <p className="text-sm text-muted-foreground">
+                            JPG, PNG 파일을 업로드할 수 있어요
+                          </p>
+                        </div>
+                        {!screenshotPreview && (
+                          <Button type="button" variant="outline">
+                            <Upload className="w-4 h-4 mr-2" />
+                            파일 선택
+                          </Button>
+                        )}
+                      </div>
+                    </label>
+                    <input
+                      id="screenshot-upload"
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                      className="hidden"
+                    />
+                  </div>
+                )}
 
-                {/* 미리보기 */}
-                {screenshotPreview && (
+                {/* 텍스트 입력 모드 */}
+                {inputMode === "text" && (
+                  <div className="space-y-4">
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <p className="text-sm text-blue-800">
+                        <Type className="w-4 h-4 inline mr-2" />
+                        먹은 음식을 텍스트로 입력해주세요
+                      </p>
+                    </div>
+                    <div className="space-y-3">
+                      {textMealItems.map((item, index) => (
+                        <div key={index} className="flex gap-2 items-start border rounded-lg p-4">
+                          <div className="flex-1 space-y-3">
+                            <div>
+                              <Label htmlFor={`meal-name-${index}`}>음식 이름 *</Label>
+                              <Input
+                                id={`meal-name-${index}`}
+                                placeholder="예: 치킨, 비빔밥, 파스타"
+                                value={item.name}
+                                onChange={(e) => updateMealItem(index, "name", e.target.value)}
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor={`restaurant-${index}`}>식당 이름 (선택)</Label>
+                              <Input
+                                id={`restaurant-${index}`}
+                                placeholder="예: 치킨플러스, 한식당"
+                                value={item.restaurant}
+                                onChange={(e) => updateMealItem(index, "restaurant", e.target.value)}
+                              />
+                            </div>
+                          </div>
+                          {textMealItems.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => removeMealItem(index)}
+                              className="mt-2"
+                            >
+                              <Trash2 className="w-4 h-4 text-destructive" />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={addMealItem}
+                        className="w-full"
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        음식 추가하기
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 미리보기 (사진 모드일 때만) */}
+                {inputMode === "photo" && screenshotPreview && (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
@@ -226,10 +397,51 @@ export function AnalyzePage() {
                   </motion.div>
                 )}
 
+                {/* 날짜 및 시간대 입력 - 사진 업로드 또는 텍스트 입력 후에만 표시 */}
+                {((inputMode === "photo" && screenshotPreview) || (inputMode === "text" && textMealItems.some(item => item.name.trim() !== ""))) && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="border-t pt-6 mt-6"
+                  >
+                    <h3 className="text-lg font-semibold mb-4">식사 정보 입력</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="meal-date">식사 날짜</Label>
+                        <Input
+                          id="meal-date"
+                          type="date"
+                          value={mealDate}
+                          onChange={(e) => setMealDate(e.target.value)}
+                          className="w-full"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="meal-time">식사 시간대</Label>
+                        <Select value={mealTime} onValueChange={(value: "아침" | "점심" | "저녁" | "야식") => setMealTime(value)}>
+                          <SelectTrigger id="meal-time" className="w-full">
+                            <SelectValue placeholder="시간대를 선택하세요" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="아침">아침</SelectItem>
+                            <SelectItem value="점심">점심</SelectItem>
+                            <SelectItem value="저녁">저녁</SelectItem>
+                            <SelectItem value="야식">야식</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+
                 {/* 분석 버튼 */}
                 <Button
                   onClick={handleAnalyze}
-                  disabled={!screenshot || isAnalyzing}
+                  disabled={
+                    (inputMode === "photo" && !screenshot) ||
+                    (inputMode === "text" && !textMealItems.some(item => item.name.trim() !== "")) ||
+                    isAnalyzing
+                  }
                   className="w-full"
                   size="lg"
                 >
@@ -241,25 +453,10 @@ export function AnalyzePage() {
                   ) : (
                     <>
                       <Sparkles className="w-4 h-4 mr-2" />
-                      영양소 자동 분석하기
+                      {inputMode === "photo" ? "영양소 자동 분석하기" : "영양소 분석하기"}
                     </>
                   )}
                 </Button>
-
-                {/* 안내 */}
-                <div className="bg-green-50 border border-green-300 rounded-lg p-4">
-                  <div className="flex gap-3">
-                    <AlertCircle className="w-5 h-5 text-green-700 flex-shrink-0 mt-0.5" />
-                    <div className="text-sm text-green-900">
-                      <p className="mb-2">
-                        배달의민족, 요기요, 쿠팡이츠 등 모든 배달앱을 지원해요!
-                      </p>
-                      <p>
-                        메뉴명이 잘 보이도록 스크린샷을 찍어주시면 더 정확하게 분석할 수 있어요 😊
-                      </p>
-                    </div>
-                  </div>
-                </div>
               </CardContent>
             </Card>
 
@@ -277,16 +474,50 @@ export function AnalyzePage() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-6">
+                    {/* 날짜 및 시간대 정보 */}
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <div className="flex items-center gap-4 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">날짜: </span>
+                          <span className="font-medium">{analysisResult.date}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">시간대: </span>
+                          <Badge variant="outline" className="font-medium">{analysisResult.mealTime}</Badge>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* 메뉴 정보 */}
                     <div>
                       <h3 className="mb-3">인식된 메뉴</h3>
-                      <div className="space-y-2">
-                        {analysisResult.items.map((item, index) => (
-                          <div key={index} className="flex items-center gap-2 text-sm">
-                            <Badge variant="outline">{item.restaurant}</Badge>
-                            <span>{item.name}</span>
-                          </div>
-                        ))}
+                      <div className="space-y-4">
+                        {analysisResult.items.map((item, index) => {
+                          const consumption = item.consumption !== undefined ? item.consumption : 100;
+                          return (
+                            <div key={index} className="border rounded-lg p-4 space-y-3">
+                              <div className="flex items-center gap-2 text-sm">
+                                <Badge variant="outline">{item.restaurant}</Badge>
+                                <span className="font-medium">{item.name}</span>
+                              </div>
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between text-sm">
+                                  <Label>섭취량: {consumption}%</Label>
+                                </div>
+                                <div className="px-1">
+                                  <Slider
+                                    value={[consumption]}
+                                    onValueChange={(values) => updateAnalysisItemConsumption(index, values[0])}
+                                    min={0}
+                                    max={100}
+                                    step={1}
+                                    className="w-full"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -362,12 +593,15 @@ export function AnalyzePage() {
                         <div className="flex justify-between items-start mb-4">
                           <div>
                             <p className="text-sm text-muted-foreground mb-1">
-                              {record.date} {record.time}
+                              {record.date} {record.time} <Badge variant="outline" className="ml-2">{record.mealTime}</Badge>
                             </p>
                             <div className="space-y-1">
                               {record.items.map((item, index) => (
                                 <p key={index} className="text-sm">
                                   {item.name} <span className="text-muted-foreground">({item.restaurant})</span>
+                                  {item.consumption !== 100 && (
+                                    <span className="text-muted-foreground ml-2">- {item.consumption}%</span>
+                                  )}
                                 </p>
                               ))}
                             </div>

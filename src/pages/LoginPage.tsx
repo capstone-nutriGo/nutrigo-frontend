@@ -9,6 +9,9 @@ import { Logo } from "../components/Logo";
 import { Mail, Lock, ArrowRight, Chrome } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { loginApi } from "../api/auth";
+import { handleApiError } from "../api/errorHandler";
+
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -17,19 +20,35 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    
-    // 실제로는 API 호출
-    setTimeout(() => {
+    setError(null);
+
+    try {
+      // 1) 백엔드 로그인 API 호출
+      const auth = await loginApi({ email, password });
+
+      // 2) AuthContext에 토큰/로그인 상태 반영
+      //    (아래에서 AuthContext.login(data) 형식을 만들 거야)
+      login(auth);
+
+      // 3) 홈으로 이동
+      navigate("/");
+    } catch (err: any) {
+      console.error(err);
+      // 토스트 알림 표시
+      const errorInfo = handleApiError(err);
+      // 폼 내부에도 에러 메시지 표시 (선택사항)
+      setError(errorInfo.message);
+    } finally {
       setIsLoading(false);
-      login(); // 로그인 상태 업데이트
-      // 로그인 성공 후 홈으로 이동
-      navigate('/');
-    }, 1500);
+    }
   };
+
 
   const handleSocialLogin = (provider: string) => {
     console.log(`${provider} 로그인`);
@@ -67,7 +86,10 @@ export function LoginPage() {
                     type="email"
                     placeholder="your@email.com"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (error) setError(null);
+                    }}
                     className="pl-10"
                     required
                   />
@@ -84,18 +106,28 @@ export function LoginPage() {
                     type="password"
                     placeholder="••••••••"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      if (error) setError(null);
+                    }}
                     className="pl-10"
                     required
                   />
                 </div>
               </div>
 
+              {/* 에러 메시지 */}
+              {error && (
+                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                  {error}
+                </div>
+              )}
+
               {/* 로그인 유지 & 비밀번호 찾기 */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
-                  <Checkbox 
-                    id="remember" 
+                  <Checkbox
+                    id="remember"
                     checked={rememberMe}
                     onCheckedChange={(checked) => setRememberMe(checked as boolean)}
                   />
@@ -106,9 +138,9 @@ export function LoginPage() {
                     로그인 유지
                   </label>
                 </div>
-                <Button 
-                  variant="link" 
-                  className="p-0 h-auto text-sm" 
+                <Button
+                  variant="link"
+                  className="p-0 h-auto text-sm"
                   type="button"
                   onClick={() => navigate('/forgot-password')}
                 >
@@ -117,9 +149,9 @@ export function LoginPage() {
               </div>
 
               {/* 로그인 버튼 */}
-              <Button 
-                type="submit" 
-                className="w-full" 
+              <Button
+                type="submit"
+                className="w-full"
                 size="lg"
                 disabled={isLoading}
               >
@@ -157,7 +189,7 @@ export function LoginPage() {
                 <Chrome className="w-4 h-4 mr-2" />
                 Google로 계속하기
               </Button>
-              
+
               <Button
                 variant="outline"
                 className="w-full"
@@ -172,8 +204,8 @@ export function LoginPage() {
             {/* 회원가입 링크 */}
             <div className="mt-6 text-center text-sm">
               <span className="text-muted-foreground">아직 계정이 없으신가요? </span>
-              <Button 
-                variant="link" 
+              <Button
+                variant="link"
                 className="p-0 h-auto"
                 onClick={() => navigate('/signup')}
               >
@@ -185,8 +217,8 @@ export function LoginPage() {
 
         {/* 뒤로가기 */}
         <div className="mt-4 text-center">
-          <Button 
-            variant="ghost" 
+          <Button
+            variant="ghost"
             onClick={() => navigate('/')}
           >
             홈으로 돌아가기
