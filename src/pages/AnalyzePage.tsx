@@ -17,7 +17,7 @@ import { motion } from "motion/react";
 import { Textarea } from "../components/ui/textarea";
 import { Slider } from "../components/ui/slider";
 
-interface MealRecord { //ffff
+interface MealRecord { //fffffff
   id: string;
   date: string;
   time: string;
