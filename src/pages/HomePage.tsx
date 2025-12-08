@@ -13,7 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../components/ui/alert-dialog";
-import { fetchCalendar, fetchDayMeals } from "../api/insight";
+import { fetchCalendar, fetchDayMeals, getWeeklySummary } from "../api/insight";
 import { getProgress } from "../api/challenge";
 
 export function HomePage() {
@@ -31,6 +31,8 @@ export function HomePage() {
     recordedDays: 0
   });
   const [isLoadingWeekSummary, setIsLoadingWeekSummary] = useState(true);
+  const [weeklySummaryData, setWeeklySummaryData] = useState<any>(null);
+  const [weeklyTip, setWeeklyTip] = useState<string>("");
 
   // 페이지 로드 시 전날 기록 체크
   useEffect(() => {
@@ -121,65 +123,103 @@ export function HomePage() {
       try {
         setIsLoadingWeekSummary(true);
         
-        // 이번 주의 시작일(월요일)과 종료일(일요일) 계산
+        // 오늘 날짜를 기준으로 주간 요약 조회
         const today = new Date();
-        const dayOfWeek = today.getDay(); // 0(일요일) ~ 6(토요일)
-        const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // 월요일까지의 오프셋
-        const monday = new Date(today);
-        monday.setDate(today.getDate() + mondayOffset);
-        monday.setHours(0, 0, 0, 0);
-        
-        const sunday = new Date(monday);
-        sunday.setDate(monday.getDate() + 6);
-        sunday.setHours(23, 59, 59, 999);
-        
-        const startDate = monday.toISOString().split('T')[0]; // "YYYY-MM-DD"
-        const endDate = sunday.toISOString().split('T')[0];
+        const baseDate = today.toISOString().split('T')[0]; // "YYYY-MM-DD"
         
         // 병렬로 데이터 가져오기
-        const [calendarRes, progressRes] = await Promise.all([
-          fetchCalendar(startDate, endDate),
-          getProgress()
+        const [weeklySummaryRes, progressRes] = await Promise.all([
+          getWeeklySummary(baseDate).catch(() => null), // 에러 발생 시 null 반환
+          getProgress().catch(() => null)
         ]);
         
-        const calendarDays = calendarRes.data.days;
-        
-        // 각 날짜의 상세 데이터 가져오기 (칼로리 계산용)
-        const dayMealsPromises = calendarDays.map(day => 
-          fetchDayMeals(day.date).catch(() => null) // 에러 발생 시 null 반환
-        );
-        const dayMealsResults = await Promise.all(dayMealsPromises);
-        
-        // 통계 계산
-        let totalCalories = 0;
-        let recordedDaysCount = 0;
-        let redDaysCount = 0;
-        
-        dayMealsResults.forEach((result, index) => {
-          if (result && result.data.totalKcal !== null && result.data.totalKcal !== undefined) {
-            totalCalories += result.data.totalKcal;
-            recordedDaysCount++;
-          }
+        // 주간 요약 API에서 데이터 가져오기
+        if (weeklySummaryRes && weeklySummaryRes.data) {
+          const summary = weeklySummaryRes.data.summary;
+          const trends = weeklySummaryRes.data.trends;
           
-          // 빨간 날 체크 (highlight가 BAD인 경우)
-          if (calendarDays[index]?.highlight === "BAD") {
-            redDaysCount++;
+          // 평균 칼로리 계산 (일일 평균)
+          const avgCalories = summary.averageKcalPerMeal 
+            ? Math.round(summary.averageKcalPerMeal) 
+            : 0;
+          
+          // 빨간 날 개수 계산 (trends에서 dayColor가 "RED"인 날)
+          const redDays = trends.days.filter(day => day.dayColor === "RED").length;
+          
+          // 기록한 날 개수 (trends에 데이터가 있는 날)
+          const recordedDays = trends.days.filter(day => day.totalKcal !== null).length;
+          
+          // 진행 중 챌린지 개수
+          const challengesActive = progressRes?.data?.inProgress?.length || 0;
+          
+          setWeekSummary({
+            avgCalories,
+            redDays,
+            challengesActive,
+            recordedDays
+          });
+          
+          // 주간 요약 데이터 저장 (팁 생성용)
+          setWeeklySummaryData(weeklySummaryRes.data);
+          
+          // 동적 팁 생성
+          generateWeeklyTip(weeklySummaryRes.data);
+        } else {
+          // API 실패 시 기존 로직으로 폴백
+          const dayOfWeek = today.getDay();
+          const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+          const monday = new Date(today);
+          monday.setDate(today.getDate() + mondayOffset);
+          monday.setHours(0, 0, 0, 0);
+          
+          const sunday = new Date(monday);
+          sunday.setDate(monday.getDate() + 6);
+          sunday.setHours(23, 59, 59, 999);
+          
+          const startDate = monday.toISOString().split('T')[0];
+          const endDate = sunday.toISOString().split('T')[0];
+          
+          const [calendarRes, fallbackProgressRes] = await Promise.all([
+            fetchCalendar(startDate, endDate).catch(() => null),
+            progressRes || getProgress().catch(() => null)
+          ]);
+          
+          if (calendarRes) {
+            const calendarDays = calendarRes.data.days;
+            const dayMealsPromises = calendarDays.map(day => 
+              fetchDayMeals(day.date).catch(() => null)
+            );
+            const dayMealsResults = await Promise.all(dayMealsPromises);
+            
+            let totalCalories = 0;
+            let recordedDaysCount = 0;
+            let redDaysCount = 0;
+            
+            dayMealsResults.forEach((result, index) => {
+              if (result && result.data.totalKcal !== null && result.data.totalKcal !== undefined) {
+                totalCalories += result.data.totalKcal;
+                recordedDaysCount++;
+              }
+              
+              if (calendarDays[index]?.highlight === "BAD") {
+                redDaysCount++;
+              }
+            });
+            
+            const avgCalories = recordedDaysCount > 0 
+              ? Math.round(totalCalories / recordedDaysCount) 
+              : 0;
+            
+            const challengesActive = fallbackProgressRes?.data?.inProgress?.length || 0;
+            
+            setWeekSummary({
+              avgCalories,
+              redDays: redDaysCount,
+              challengesActive,
+              recordedDays: recordedDaysCount
+            });
           }
-        });
-        
-        const avgCalories = recordedDaysCount > 0 
-          ? Math.round(totalCalories / recordedDaysCount) 
-          : 0;
-        
-        // 진행 중 챌린지 개수
-        const challengesActive = progressRes.data.inProgress.length;
-        
-        setWeekSummary({
-          avgCalories,
-          redDays: redDaysCount,
-          challengesActive,
-          recordedDays: recordedDaysCount
-        });
+        }
       } catch (error) {
         console.error("주간 요약 데이터 로드 실패:", error);
         // 에러 발생 시 기본값 유지
@@ -190,6 +230,68 @@ export function HomePage() {
     
     loadWeekSummary();
   }, []);
+
+  // 주간 팁 생성 함수
+  const generateWeeklyTip = (data: any) => {
+    if (!data || !data.trends || !data.trends.days || data.trends.days.length === 0) {
+      setWeeklyTip("식사 기록을 시작하면 맞춤형 팁을 제공해드릴게요! 📝");
+      return;
+    }
+
+    const days = data.trends.days;
+    const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
+    
+    // 빨간 날(고칼로리/고나트륨) 찾기
+    const redDays = days
+      .map((day: any, index: number) => ({
+        dayName: dayNames[new Date(day.date).getDay()],
+        date: day.date,
+        totalKcal: day.totalKcal,
+        dayColor: day.dayColor,
+      }))
+      .filter((day: any) => day.dayColor === "RED" && day.totalKcal !== null);
+
+    // 과식한 날이 있는 경우
+    if (redDays.length > 0) {
+      const redDayNames = redDays.map((d: any) => d.dayName).join(", ");
+      setWeeklyTip(
+        `${redDayNames}요일에 고칼로리 음식을 드셨네요. 다음 주에는 이 날들에 조금 더 가볍게 먹어보는 건 어떨까요? 😊`
+      );
+      return;
+    }
+
+    // 좋은 날이 많은 경우
+    const goodDays = days.filter((day: any) => day.dayColor === "GREEN").length;
+    if (goodDays >= days.length * 0.7) {
+      setWeeklyTip(
+        "이번 주 식습관이 정말 좋아요! 계속 이렇게 유지해보세요 💚"
+      );
+      return;
+    }
+
+    // 평균 칼로리가 높은 경우
+    const avgKcal = data.summary?.averageKcalPerMeal;
+    if (avgKcal && avgKcal > 2500) {
+      setWeeklyTip(
+        "평균 칼로리가 조금 높네요. 식사량을 조금 줄이거나 가벼운 메뉴를 선택해보세요! 🥗"
+      );
+      return;
+    }
+
+    // 저나트륨 날이 많은 경우 (긍정적)
+    const lowSodiumDays = data.summary?.lowSodiumDays || 0;
+    if (lowSodiumDays >= days.length * 0.5) {
+      setWeeklyTip(
+        "나트륨 섭취를 잘 관리하고 계시네요! 건강한 식습관을 유지하고 있어요 👍"
+      );
+      return;
+    }
+
+    // 기본 팁
+    setWeeklyTip(
+      "규칙적인 식사 시간을 유지하고 균형 잡힌 식단을 챙겨보세요! 🌟"
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50/30 via-stone-50 to-lime-50/30">
@@ -373,7 +475,11 @@ export function HomePage() {
                     <div>
                       <p className="text-base font-semibold mb-2">💡 이번 주 팁</p>
                       <p className="text-base opacity-90 leading-relaxed">
-                        목요일과 토요일에 고칼로리 음식을 드셨네요. 다음 주에는 이 날들에 조금 더 가볍게 먹어보는 건 어떨까요? 😊
+                        {isLoadingWeekSummary ? (
+                          "팁을 생성하는 중..."
+                        ) : weeklyTip || (
+                          "식사 기록을 시작하면 맞춤형 팁을 제공해드릴게요! 📝"
+                        )}
                       </p>
                     </div>
                   </div>

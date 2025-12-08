@@ -15,6 +15,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from "../components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import {
   Calendar as CalendarIcon,
   TrendingUp,
@@ -40,9 +42,15 @@ import { motion } from "motion/react";
 import {
   fetchCalendar,
   fetchDayMeals,
+  getReport,
+  getWeeklySummary,
   CalendarDay,
   DayMealsData,
+  type InsightReportResponse,
+  type ReportRange,
+  type WeeklyInsightSummaryResponse,
 } from "../api/insight";
+import { handleApiError } from "../api/errorHandler";
 
 /** ---------- 임시 주간 데이터 (백엔드 리포트 붙이기 전까지 사용) ---------- */
 const weeklyData = [
@@ -89,6 +97,16 @@ export function InsightsPage() {
   const [isLoadingCalendar, setIsLoadingCalendar] = useState(false);
   const [isLoadingMeals, setIsLoadingMeals] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 리포트 상태
+  const [reportRange, setReportRange] = useState<ReportRange>("WEEKLY");
+  const [reportData, setReportData] = useState<InsightReportResponse | null>(null);
+  const [isLoadingReport, setIsLoadingReport] = useState(false);
+  const [activeTab, setActiveTab] = useState<"calendar" | "report">("calendar");
+
+  // 주간 요약 상태
+  const [weeklySummary, setWeeklySummary] = useState<WeeklyInsightSummaryResponse | null>(null);
+  const [isLoadingWeeklySummary, setIsLoadingWeeklySummary] = useState(false);
 
   /** ---------- 달력 계산 함수 ---------- */
   const getDaysInMonth = (year: number, month: number) => {
@@ -168,6 +186,26 @@ export function InsightsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentYear, currentMonth]);
 
+  /** ---------- 주간 요약 데이터 불러오기 ---------- */
+  useEffect(() => {
+    const loadWeeklySummary = async () => {
+      try {
+        setIsLoadingWeeklySummary(true);
+        const today = new Date();
+        const baseDate = today.toISOString().split('T')[0];
+        const res = await getWeeklySummary(baseDate);
+        setWeeklySummary(res);
+      } catch (error) {
+        console.error("주간 요약 로드 실패:", error);
+        // 에러가 발생해도 화면은 표시되도록 함
+      } finally {
+        setIsLoadingWeeklySummary(false);
+      }
+    };
+
+    loadWeeklySummary();
+  }, []);
+
   /** ---------- 날짜 클릭 시 /meals/day 호출 ---------- */
   const handleDateClick = async (day: CalendarDayWithLevel) => {
     setSelectedDate(day);
@@ -187,14 +225,78 @@ export function InsightsPage() {
     }
   };
 
-  /** ---------- 주간 통계 (지금은 임시 weeklyData 기반) ---------- */
-  const weeklyAvgCalories = Math.round(
-    weeklyData.reduce((sum, d) => sum + d.calories, 0) / weeklyData.length
-  );
-  const weeklyAvgSodium = Math.round(
-    weeklyData.reduce((sum, d) => sum + d.sodium, 0) / weeklyData.length
-  );
-  const redDaysCount = calendarData.filter((d) => d.level === "red").length;
+  /** ---------- 주간 통계 (API 데이터 기반) ---------- */
+  // API 데이터가 있으면 사용, 없으면 null 또는 0
+  const weeklyAvgCalories = weeklySummary?.data?.summary?.averageKcalPerMeal 
+    ? Math.round(weeklySummary.data.summary.averageKcalPerMeal) 
+    : null;
+  
+  // 나트륨은 trends에서 계산
+  const weeklyAvgSodium = weeklySummary?.data?.trends?.days?.length > 0
+    ? (() => {
+        const daysWithSodium = weeklySummary.data.trends.days.filter(d => d.totalSodiumMg !== null);
+        return daysWithSodium.length > 0
+          ? Math.round(daysWithSodium.reduce((sum, d) => sum + (d.totalSodiumMg || 0), 0) / daysWithSodium.length)
+          : null;
+      })()
+    : null;
+  
+  const redDaysCount = weeklySummary?.data?.summary?.overeatDays ?? 0;
+
+  // 카테고리 TOP 3 (API 데이터만 사용)
+  const topCategoriesData = weeklySummary?.data?.categoryTop3?.slice(0, 3) || [];
+  
+  // 주간 트렌드 데이터 (API 데이터만 사용)
+  const weeklyTrendData = weeklySummary?.data?.trends?.days?.map((day) => {
+    const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
+    const date = new Date(day.date);
+    return {
+      day: dayNames[date.getDay()],
+      calories: day.totalKcal ? Math.round(day.totalKcal) : 0,
+      sodium: day.totalSodiumMg ? Math.round(day.totalSodiumMg) : 0,
+    };
+  }) || [];
+  
+  // 인사이트 메시지 생성 (실제 데이터 기반)
+  const getInsightMessages = () => {
+    if (!weeklySummary?.data?.trends?.days || weeklyTrendData.length === 0) {
+      return null;
+    }
+    
+    const messages = [];
+    
+    // 가장 칼로리가 높은 날 찾기
+    const maxCalorieDay = weeklyTrendData.reduce((max, day) => 
+      day.calories > max.calories ? day : max, weeklyTrendData[0]
+    );
+    
+    if (maxCalorieDay && maxCalorieDay.calories > 0) {
+      messages.push({
+        type: "warning",
+        icon: TrendingUp,
+        title: `${maxCalorieDay.day}요일에 칼로리가 가장 높았어요!`,
+        description: `다음 주 ${maxCalorieDay.day}요일엔 조금 가볍게 먹어보는 건 어떨까요? 😊`,
+      });
+    }
+    
+    // 가장 칼로리가 낮은 날 찾기
+    const minCalorieDay = weeklyTrendData.reduce((min, day) => 
+      day.calories < min.calories && day.calories > 0 ? day : min, weeklyTrendData[0]
+    );
+    
+    if (minCalorieDay && minCalorieDay.calories > 0 && minCalorieDay.calories < maxCalorieDay.calories) {
+      messages.push({
+        type: "success",
+        icon: TrendingDown,
+        title: `${minCalorieDay.day}요일 식단이 가장 좋았어요!`,
+        description: `이런 식으로 계속 유지해보세요 💚`,
+      });
+    }
+    
+    return messages.length > 0 ? messages : null;
+  };
+  
+  const insightMessages = getInsightMessages();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50/30 via-stone-50 to-lime-50/30">
@@ -207,7 +309,7 @@ export function InsightsPage() {
           <div className="max-w-6xl mx-auto">
             {/* 헤더 */}
             <div className="text-center mb-12">
-              <h1 className="text-4xl mb-4">나의 식습관 캘린더</h1>
+              <h1 className="text-4xl mb-4">나의 식습관 인사이트</h1>
               <p className="text-lg text-muted-foreground">
                 매일의 식습관을 한눈에 확인하고 건강한 습관을 만들어가요 📅
               </p>
@@ -217,6 +319,15 @@ export function InsightsPage() {
               <p className="mb-4 text-center text-sm text-red-500">{error}</p>
             )}
 
+            {/* 탭 메뉴 */}
+            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "calendar" | "report")} className="mb-8">
+              <TabsList className="grid w-full max-w-md mx-auto grid-cols-2">
+                <TabsTrigger value="calendar">캘린더</TabsTrigger>
+                <TabsTrigger value="report">리포트</TabsTrigger>
+              </TabsList>
+
+              {/* 캘린더 탭 */}
+              <TabsContent value="calendar">
             {/* 캘린더 */}
             <Card className="mb-8">
               <CardHeader>
@@ -354,8 +465,129 @@ export function InsightsPage() {
                 </div>
               </CardContent>
             </Card>
+              </TabsContent>
 
-            {/* 주간 보고서 */}
+              {/* 리포트 탭 */}
+              <TabsContent value="report">
+                <Card className="mb-8">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle>식습관 리포트</CardTitle>
+                      <Select value={reportRange} onValueChange={(value: ReportRange) => setReportRange(value)}>
+                        <SelectTrigger className="w-[180px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="WEEKLY">주간 리포트</SelectItem>
+                          <SelectItem value="MONTHLY">월간 리포트</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <CardDescription>
+                      {reportRange === "WEEKLY" ? "이번 주" : "이번 달"} 식습관을 분석한 리포트예요
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {isLoadingReport ? (
+                      <div className="text-center py-12">
+                        <p className="text-muted-foreground">리포트를 불러오는 중입니다...</p>
+                      </div>
+                    ) : reportData ? (
+                      <div className="space-y-6">
+                        {/* 요약 정보 */}
+                        <div className="grid md:grid-cols-2 gap-4">
+                          <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 mb-2">
+                              <UtensilsCrossed className="w-5 h-5 text-orange-600" />
+                              <span className="text-sm text-muted-foreground">총 식사 횟수</span>
+                            </div>
+                            <p className="text-2xl font-semibold text-orange-600">
+                              {reportData.data.summary.totalMeals}
+                              <span className="text-sm ml-1">회</span>
+                            </p>
+                          </div>
+
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Award className="w-5 h-5 text-green-600" />
+                              <span className="text-sm text-muted-foreground">좋은 날</span>
+                            </div>
+                            <p className="text-2xl font-semibold text-green-600">
+                              {reportData.data.summary.goodDays}
+                              <span className="text-sm ml-1">일</span>
+                            </p>
+                          </div>
+
+                          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 mb-2">
+                              <AlertCircle className="w-5 h-5 text-red-600" />
+                              <span className="text-sm text-muted-foreground">과식한 날</span>
+                            </div>
+                            <p className="text-2xl font-semibold text-red-600">
+                              {reportData.data.summary.overeatDays}
+                              <span className="text-sm ml-1">일</span>
+                            </p>
+                          </div>
+
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Droplets className="w-5 h-5 text-blue-600" />
+                              <span className="text-sm text-muted-foreground">저나트륨 날</span>
+                            </div>
+                            <p className="text-2xl font-semibold text-blue-600">
+                              {reportData.data.summary.lowSodiumDays}
+                              <span className="text-sm ml-1">일</span>
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* 평균 점수 */}
+                        <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-lg p-6">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-sm text-muted-foreground mb-1">평균 점수</p>
+                              <p className="text-4xl font-bold text-purple-600">
+                                {reportData.data.summary.avgScore.toFixed(1)}
+                                <span className="text-lg ml-1">/ 100</span>
+                              </p>
+                            </div>
+                            <TrendingUp className="w-12 h-12 text-purple-400" />
+                          </div>
+                        </div>
+
+                        {/* 패턴 분석 */}
+                        {reportData.data.patterns.lateSnack.lateSnackDays > 0 && (
+                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 mb-2">
+                              <AlertCircle className="w-5 h-5 text-amber-600" />
+                              <span className="font-semibold text-amber-900">패턴 분석</span>
+                            </div>
+                            <p className="text-sm text-amber-800">
+                              늦은 밤 간식을 {reportData.data.patterns.lateSnack.lateSnackDays}일 동안 드셨어요.
+                              규칙적인 식사 시간을 유지하는 것이 건강에 도움이 돼요!
+                            </p>
+                          </div>
+                        )}
+
+                        {/* 기간 정보 */}
+                        <div className="text-sm text-muted-foreground text-center">
+                          리포트 기간: {reportData.data.startDate} ~ {reportData.data.endDate}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-12">
+                        <p className="text-muted-foreground">리포트 데이터가 없어요</p>
+                        <p className="text-sm text-muted-foreground mt-2">
+                          식사 기록을 시작하면 리포트가 생성돼요
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
+
+            {/* 주간 보고서 (기존 유지) */}
             <div className="grid md:grid-cols-2 gap-8 mb-8">
               {/* 이번 주 요약 */}
               <Card>
@@ -381,8 +613,14 @@ export function InsightsPage() {
                       </Badge>
                     </div>
                     <p className="text-3xl text-orange-600">
-                      {weeklyAvgCalories}
-                      <span className="text-sm ml-1">kcal</span>
+                      {weeklyAvgCalories !== null ? (
+                        <>
+                          {weeklyAvgCalories}
+                          <span className="text-sm ml-1">kcal</span>
+                        </>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">데이터 없음</span>
+                      )}
                     </p>
                   </div>
 
@@ -403,8 +641,14 @@ export function InsightsPage() {
                       </Badge>
                     </div>
                     <p className="text-3xl text-blue-600">
-                      {weeklyAvgSodium}
-                      <span className="text-sm ml-1">mg</span>
+                      {weeklyAvgSodium !== null ? (
+                        <>
+                          {weeklyAvgSodium}
+                          <span className="text-sm ml-1">mg</span>
+                        </>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">데이터 없음</span>
+                      )}
                     </p>
                   </div>
 
@@ -433,34 +677,58 @@ export function InsightsPage() {
                       <Award className="w-5 h-5 text-purple-600" />
                       많이 먹은 카테고리 TOP 3
                     </h4>
-                    <div className="space-y-2">
-                      {topCategories.map((category, index) => (
-                        <div key={index} className="flex items-center gap-3">
-                          <Badge
-                            variant="outline"
-                            className="w-8 h-8 rounded-full flex items-center justify-center"
-                          >
-                            {index + 1}
-                          </Badge>
-                          <div className="flex-1">
-                            <div className="flex justify-between items-center mb-1">
-                              <span className="text-sm">{category.name}</span>
-                              <span className="text-sm text-muted-foreground">
-                                {category.count}회 ({category.percentage}%)
-                              </span>
+                    {isLoadingWeeklySummary ? (
+                      <div className="text-center py-4 text-muted-foreground">
+                        <p className="text-sm">로딩 중...</p>
+                      </div>
+                    ) : topCategoriesData.length > 0 ? (
+                      <div className="space-y-2">
+                        {topCategoriesData.map((category, index) => {
+                          // API 데이터인지 하드코딩 데이터인지 확인
+                          const categoryName = typeof category === 'object' && 'category' in category 
+                            ? category.category 
+                            : (category as any).name;
+                          const categoryCount = typeof category === 'object' && 'count' in category 
+                            ? category.count 
+                            : (category as any).count;
+                          const totalMeals = weeklySummary?.data?.summary?.totalMeals || 0;
+                          const percentage = totalMeals > 0 
+                            ? Math.round((categoryCount / totalMeals) * 100) 
+                            : (category as any).percentage || 0;
+                          
+                          return (
+                            <div key={index} className="flex items-center gap-3">
+                              <Badge
+                                variant="outline"
+                                className="w-8 h-8 rounded-full flex items-center justify-center"
+                              >
+                                {index + 1}
+                              </Badge>
+                              <div className="flex-1">
+                                <div className="flex justify-between items-center mb-1">
+                                  <span className="text-sm">{categoryName}</span>
+                                  <span className="text-sm text-muted-foreground">
+                                    {categoryCount}회 ({percentage}%)
+                                  </span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-2">
+                                  <div
+                                    className="bg-purple-500 h-2 rounded-full"
+                                    style={{
+                                      width: `${percentage}%`,
+                                    }}
+                                  ></div>
+                                </div>
+                              </div>
                             </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                              <div
-                                className="bg-purple-500 h-2 rounded-full"
-                                style={{
-                                  width: `${category.percentage}%`,
-                                }}
-                              ></div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-center py-4 text-muted-foreground">
+                        <p className="text-sm">데이터가 없어요</p>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -472,60 +740,90 @@ export function InsightsPage() {
                   <CardDescription>요일별 칼로리 & 나트륨 변화</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={weeklyData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="day" />
-                      <YAxis />
-                      <Tooltip />
-                      <Line
-                        type="monotone"
-                        dataKey="calories"
-                        stroke="#f97316"
-                        strokeWidth={2}
-                        name="칼로리"
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="sodium"
-                        stroke="#3b82f6"
-                        strokeWidth={2}
-                        name="나트륨"
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-
-                  {/* 인사이트 메시지 (임시 텍스트) */}
-                  <div className="mt-6 space-y-3">
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                      <div className="flex gap-2">
-                        <TrendingUp className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-                        <div className="text-sm text-yellow-900">
-                          <p className="mb-1">
-                            목요일에 칼로리가 가장 높았어요!
-                          </p>
-                          <p className="text-xs text-yellow-700">
-                            다음 주 목요일엔 조금 가볍게 먹어보는 건 어떨까요?
-                            😊
-                          </p>
-                        </div>
-                      </div>
+                  {isLoadingWeeklySummary ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <p>차트 데이터를 불러오는 중입니다...</p>
                     </div>
-
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                      <div className="flex gap-2">
-                        <TrendingDown className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-                        <div className="text-sm text-green-900">
-                          <p className="mb-1">
-                            금요일 식단이 가장 좋았어요!
-                          </p>
-                          <p className="text-xs text-green-700">
-                            이런 식으로 계속 유지해보세요 💚
-                          </p>
+                  ) : weeklyTrendData.length > 0 ? (
+                    <>
+                      <ResponsiveContainer width="100%" height={300}>
+                        <LineChart data={weeklyTrendData}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="day" />
+                          <YAxis />
+                          <Tooltip />
+                          <Line
+                            type="monotone"
+                            dataKey="calories"
+                            stroke="#f97316"
+                            strokeWidth={2}
+                            name="칼로리"
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="sodium"
+                            stroke="#3b82f6"
+                            strokeWidth={2}
+                            name="나트륨"
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                      
+                      {/* 인사이트 메시지 (실제 데이터 기반) */}
+                      {insightMessages && insightMessages.length > 0 && (
+                        <div className="mt-6 space-y-3">
+                          {insightMessages.map((message, index) => {
+                            const IconComponent = message.icon;
+                            return (
+                              <div
+                                key={index}
+                                className={`border rounded-lg p-3 ${
+                                  message.type === "warning"
+                                    ? "bg-yellow-50 border-yellow-200"
+                                    : "bg-green-50 border-green-200"
+                                }`}
+                              >
+                                <div className="flex gap-2">
+                                  <IconComponent
+                                    className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                                      message.type === "warning"
+                                        ? "text-yellow-600"
+                                        : "text-green-600"
+                                    }`}
+                                  />
+                                  <div
+                                    className={`text-sm ${
+                                      message.type === "warning"
+                                        ? "text-yellow-900"
+                                        : "text-green-900"
+                                    }`}
+                                  >
+                                    <p className="mb-1">{message.title}</p>
+                                    <p
+                                      className={`text-xs ${
+                                        message.type === "warning"
+                                          ? "text-yellow-700"
+                                          : "text-green-700"
+                                      }`}
+                                    >
+                                      {message.description}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <p>차트 데이터가 없어요</p>
+                      <p className="text-sm mt-2">
+                        식사 기록을 시작하면 차트가 표시돼요
+                      </p>
                     </div>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
             </div>

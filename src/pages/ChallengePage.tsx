@@ -31,12 +31,15 @@ import {
   joinChallenge, 
   getProgress, 
   createCustomChallenge,
+  quitChallenge,
+  getChallengeProgress,
   type ChallengeSummary,
   type ChallengeCategory,
   type ChallengeType,
   type ChallengeStatus,
   type InProgressChallenge,
-  type CompletedChallenge
+  type CompletedChallenge,
+  type ChallengeProgressDetailResponse
 } from "../api/challenge";
 import { handleApiError } from "../api/errorHandler";
 
@@ -130,6 +133,12 @@ export function ChallengePage() {
   const [newChallengeGoal, setNewChallengeGoal] = useState([1800]);
   const [newChallengeDuration, setNewChallengeDuration] = useState("7");
   const [creating, setCreating] = useState(false);
+
+  // 챌린지 상세 진행 상황 다이얼로그 상태
+  const [selectedChallengeId, setSelectedChallengeId] = useState<number | null>(null);
+  const [challengeDetail, setChallengeDetail] = useState<ChallengeProgressDetailResponse | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
 
   // 챌린지 목록 로드
   useEffect(() => {
@@ -270,6 +279,40 @@ export function ChallengePage() {
     } catch (error) {
       console.error("챌린지 시작 실패:", error);
       handleApiError(error);
+    }
+  };
+
+  const handleQuitChallenge = async (challengeId: number) => {
+    if (!confirm("정말 챌린지를 포기하시겠어요? 진행 상황이 저장되지 않을 수 있어요.")) {
+      return;
+    }
+
+    try {
+      await quitChallenge(challengeId);
+      toast.success("챌린지를 포기했어요");
+      
+      // 챌린지 목록 다시 로드
+      await loadChallenges();
+    } catch (error) {
+      console.error("챌린지 포기 실패:", error);
+      handleApiError(error);
+    }
+  };
+
+  const handleViewDetail = async (challengeId: number) => {
+    setSelectedChallengeId(challengeId);
+    setIsDetailDialogOpen(true);
+    setLoadingDetail(true);
+    
+    try {
+      const detail = await getChallengeProgress(challengeId);
+      setChallengeDetail(detail);
+    } catch (error) {
+      console.error("챌린지 상세 조회 실패:", error);
+      handleApiError(error);
+      setIsDetailDialogOpen(false);
+    } finally {
+      setLoadingDetail(false);
     }
   };
 
@@ -558,11 +601,22 @@ export function ChallengePage() {
                               <Progress value={challenge.progress} className="h-2 bg-green-100" />
                             </div>
 
-                            {/* 진행 중 메시지 */}
-                            <div className="bg-green-100 border border-green-300 rounded-lg p-3 text-center">
-                              <p className="text-sm text-green-900">
-                                진행 중이에요! 계속 화이팅! 💪
-                              </p>
+                            {/* 액션 버튼들 */}
+                            <div className="flex gap-2">
+                              <Button 
+                                variant="outline" 
+                                className="flex-1"
+                                onClick={() => handleViewDetail(challenge.challengeId)}
+                              >
+                                상세 보기
+                              </Button>
+                              <Button 
+                                variant="outline" 
+                                className="flex-1 text-destructive hover:text-destructive"
+                                onClick={() => handleQuitChallenge(challenge.challengeId)}
+                              >
+                                포기하기
+                              </Button>
                             </div>
                           </CardContent>
                         </Card>
@@ -723,6 +777,122 @@ export function ChallengePage() {
                 )}
               </TabsContent>
             </Tabs>
+
+            {/* 챌린지 상세 진행 상황 다이얼로그 */}
+            <Dialog open={isDetailDialogOpen} onOpenChange={setIsDetailDialogOpen}>
+              <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>챌린지 상세 진행 상황</DialogTitle>
+                  <DialogDescription>
+                    일별 진행 상황을 확인해보세요
+                  </DialogDescription>
+                </DialogHeader>
+                
+                {loadingDetail ? (
+                  <div className="flex justify-center items-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : challengeDetail ? (
+                  <div className="space-y-6 py-4">
+                    {/* 챌린지 정보 */}
+                    <div className="space-y-2">
+                      <h3 className="text-lg font-semibold">{challengeDetail.data.title}</h3>
+                      <p className="text-sm text-muted-foreground">{challengeDetail.data.description}</p>
+                      <div className="flex gap-4 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">진행률: </span>
+                          <span className="font-semibold">{challengeDetail.data.progressRate}%</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">남은 일수: </span>
+                          <span className="font-semibold">{challengeDetail.data.remainingDays}일</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">완료 일수: </span>
+                          <span className="font-semibold">{challengeDetail.data.completedDays}/{challengeDetail.data.totalDays}일</span>
+                        </div>
+                      </div>
+                      <Progress value={challengeDetail.data.progressRate} className="h-3" />
+                    </div>
+
+                    {/* 일별 진행 상황 */}
+                    {challengeDetail.data.dailyIntakes && challengeDetail.data.dailyIntakes.length > 0 ? (
+                      <div className="space-y-3">
+                        <h4 className="font-semibold">일별 기록</h4>
+                        <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                          {challengeDetail.data.dailyIntakes.map((daily, index) => (
+                            <Card key={index} className="p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="font-medium">{daily.date}</span>
+                                {daily.dayColor && (
+                                  <Badge 
+                                    variant="outline"
+                                    className={
+                                      daily.dayColor === "GREEN" ? "bg-green-50 text-green-700 border-green-300" :
+                                      daily.dayColor === "YELLOW" ? "bg-yellow-50 text-yellow-700 border-yellow-300" :
+                                      "bg-red-50 text-red-700 border-red-300"
+                                    }
+                                  >
+                                    {daily.dayColor}
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-sm">
+                                {daily.totalKcal !== null && (
+                                  <div>
+                                    <span className="text-muted-foreground">칼로리: </span>
+                                    <span>{daily.totalKcal.toFixed(0)} kcal</span>
+                                  </div>
+                                )}
+                                {daily.totalSodiumMg !== null && (
+                                  <div>
+                                    <span className="text-muted-foreground">나트륨: </span>
+                                    <span>{daily.totalSodiumMg.toFixed(0)} mg</span>
+                                  </div>
+                                )}
+                                {daily.totalProteinG !== null && (
+                                  <div>
+                                    <span className="text-muted-foreground">단백질: </span>
+                                    <span>{daily.totalProteinG.toFixed(1)} g</span>
+                                  </div>
+                                )}
+                                {daily.totalCarbG !== null && (
+                                  <div>
+                                    <span className="text-muted-foreground">탄수화물: </span>
+                                    <span>{daily.totalCarbG.toFixed(1)} g</span>
+                                  </div>
+                                )}
+                                {daily.dayScore !== null && (
+                                  <div className="col-span-2">
+                                    <span className="text-muted-foreground">일일 점수: </span>
+                                    <span className="font-semibold">{daily.dayScore.toFixed(1)}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </Card>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 text-muted-foreground">
+                        <p>아직 기록이 없어요</p>
+                        <p className="text-sm mt-2">식사 기록을 시작하면 여기에 표시돼요</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>상세 정보를 불러올 수 없어요</p>
+                  </div>
+                )}
+                
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsDetailDialogOpen(false)}>
+                    닫기
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         </motion.div>
       </div>

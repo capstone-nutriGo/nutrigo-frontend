@@ -74,6 +74,66 @@ export interface InsightLogResponse {
   };
 }
 
+// InsightReportResponse.java
+export type ReportRange = "WEEKLY" | "MONTHLY";
+
+export interface InsightReportResponse {
+  success: boolean;
+  data: {
+    range: ReportRange;
+    startDate: string; // "YYYY-MM-DD"
+    endDate: string; // "YYYY-MM-DD"
+    summary: {
+      totalMeals: number;
+      goodDays: number;
+      overeatDays: number;
+      lowSodiumDays: number;
+      avgScore: number;
+    };
+    patterns: {
+      lateSnack: {
+        lateSnackDays: number;
+      };
+    };
+  };
+}
+
+// WeeklyInsightSummaryResponse.java
+export interface WeeklyInsightSummaryResponse {
+  success: boolean;
+  data: {
+    weekStart: string; // "YYYY-MM-DD"
+    weekEnd: string; // "YYYY-MM-DD"
+    summary: {
+      totalMeals: number | null;
+      goodDays: number | null;
+      overeatDays: number | null;
+      lowSodiumDays: number | null;
+      averageScore: number | null;
+      averageKcalPerMeal: number | null;
+    };
+    trends: {
+      days: TrendDay[];
+    };
+    categoryTop3: CategoryStat[];
+  };
+}
+
+export interface TrendDay {
+  date: string; // "YYYY-MM-DD"
+  dayScore: number | null;
+  dayColor: string | null;
+  totalKcal: number | null;
+  totalCarbG: number | null;
+  totalProteinG: number | null;
+  totalSodiumMg: number | null;
+}
+
+export interface CategoryStat {
+  category: string;
+  count: number;
+}
+
 /** ====== 실제 API 함수들 ====== */
 
 // 월별 캘린더 조회
@@ -116,6 +176,37 @@ export async function createInsightLog(
     return res.data;
   } catch (error) {
     handleApiError(error, undefined, false); // 토스트는 호출하는 곳에서 처리
+    throw error;
+  }
+}
+
+// 리포트 조회
+export async function getReport(
+  range: ReportRange,
+  baseDate: string // "YYYY-MM-DD"
+): Promise<InsightReportResponse> {
+  try {
+    const res = await api.get<InsightReportResponse>("/api/v1/insights/reports", {
+      params: { range, baseDate },
+    });
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false);
+    throw error;
+  }
+}
+
+// 주간 요약 조회
+export async function getWeeklySummary(
+  baseDate: string // "YYYY-MM-DD"
+): Promise<WeeklyInsightSummaryResponse> {
+  try {
+    const res = await api.get<WeeklyInsightSummaryResponse>("/api/v1/insights/weekly-summary", {
+      params: { baseDate },
+    });
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false);
     throw error;
   }
 }
