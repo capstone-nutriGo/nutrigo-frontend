@@ -155,6 +155,48 @@ export interface ChallengeCreateResponse {
   };
 }
 
+// ChallengeQuitResponse.java
+export interface ChallengeQuitResponse {
+  success: boolean;
+  data: {
+    challengeId: number;
+    status: ChallengeStatus;
+    finishedAt: string; // ISO datetime string
+  };
+}
+
+// ChallengeProgressDetailResponse.java
+export interface DailyIntake {
+  date: string; // "YYYY-MM-DD"
+  totalKcal: number | null;
+  totalSodiumMg: number | null;
+  totalProteinG: number | null;
+  totalCarbG: number | null;
+  totalSnack: number | null;
+  totalNight: number | null;
+  dayScore: number | null;
+  dayColor: string | null;
+}
+
+export interface ChallengeProgressDetailResponse {
+  success: boolean;
+  data: {
+    challengeId: number;
+    title: string;
+    description: string;
+    type: ChallengeType;
+    status: ChallengeStatus;
+    progressRate: number; // 0-100
+    remainingDays: number;
+    totalDays: number;
+    completedDays: number;
+    startedAt: string; // "YYYY-MM-DD"
+    endedAt: string; // "YYYY-MM-DD"
+    finishedAt: string | null; // ISO datetime string
+    dailyIntakes: DailyIntake[];
+  };
+}
+
 /** ====== API 함수들 ====== */
 
 // 챌린지 목록 조회
@@ -199,6 +241,32 @@ export async function createCustomChallenge(
     const res = await api.post<ChallengeCreateResponse>(
       "/api/v1/users/me/challenges",
       request
+    );
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false);
+    throw error;
+  }
+}
+
+// 챌린지 포기
+export async function quitChallenge(challengeId: number): Promise<ChallengeQuitResponse> {
+  try {
+    const res = await api.post<ChallengeQuitResponse>(`/api/v1/challenges/${challengeId}/quit`);
+    return res.data;
+  } catch (error) {
+    handleApiError(error, undefined, false);
+    throw error;
+  }
+}
+
+// 챌린지 상세 진행 상황 조회
+export async function getChallengeProgress(
+  challengeId: number
+): Promise<ChallengeProgressDetailResponse> {
+  try {
+    const res = await api.get<ChallengeProgressDetailResponse>(
+      `/api/v1/challenges/${challengeId}/progress`
     );
     return res.data;
   } catch (error) {
