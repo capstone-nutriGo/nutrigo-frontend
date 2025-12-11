@@ -15,6 +15,7 @@ import { InsightsPage } from "./pages/InsightsPage";
 import { KakaoCallbackPage } from "./pages/KakaoCallbackPage";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { Toaster } from "./components/ui/sonner";
 
 function AppContent() {
   const location = useLocation();
@@ -67,6 +68,7 @@ function AppContent() {
         </Routes>
       </main>
       {!isAuthPage && <Footer />}
+      <Toaster />
     </div>
   );
 }

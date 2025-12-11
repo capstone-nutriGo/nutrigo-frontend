@@ -780,114 +780,105 @@ export function ChallengePage() {
 
             {/* 챌린지 상세 진행 상황 다이얼로그 */}
             <Dialog open={isDetailDialogOpen} onOpenChange={setIsDetailDialogOpen}>
-              <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>챌린지 상세 진행 상황</DialogTitle>
-                  <DialogDescription>
+              <DialogContent className="sm:max-w-[400px] max-h-[85vh] flex flex-col p-0 gap-0 overflow-hidden">
+                <DialogHeader className="flex-shrink-0 px-4 pt-4 pb-3 border-b">
+                  <DialogTitle className="text-sm">챌린지 상세 진행 상황</DialogTitle>
+                  <DialogDescription className="text-xs">
                     일별 진행 상황을 확인해보세요
                   </DialogDescription>
                 </DialogHeader>
                 
                 {loadingDetail ? (
-                  <div className="flex justify-center items-center py-12">
-                    <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                  <div className="flex justify-center items-center py-8 flex-1">
+                    <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                   </div>
                 ) : challengeDetail ? (
-                  <div className="space-y-6 py-4">
-                    {/* 챌린지 정보 */}
-                    <div className="space-y-2">
-                      <h3 className="text-lg font-semibold">{challengeDetail.data.title}</h3>
-                      <p className="text-sm text-muted-foreground">{challengeDetail.data.description}</p>
-                      <div className="flex gap-4 text-sm">
-                        <div>
-                          <span className="text-muted-foreground">진행률: </span>
-                          <span className="font-semibold">{challengeDetail.data.progressRate}%</span>
+                  <>
+                    {/* 챌린지 정보 - 고정 영역 */}
+                    <div className="flex-shrink-0 px-4 pt-3 pb-2 border-b bg-muted/30">
+                      <div className="space-y-2">
+                        <h3 className="text-sm font-semibold">{challengeDetail.data.title}</h3>
+                        <div className="flex flex-wrap gap-3 text-xs">
+                          <div>
+                            <span className="text-muted-foreground">진행률: </span>
+                            <span className="font-semibold">{challengeDetail.data.progressRate}%</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">남은 일수: </span>
+                            <span className="font-semibold">{challengeDetail.data.remainingDays}일</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">완료: </span>
+                            <span className="font-semibold">{challengeDetail.data.completedDays}/{challengeDetail.data.totalDays}일</span>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-muted-foreground">남은 일수: </span>
-                          <span className="font-semibold">{challengeDetail.data.remainingDays}일</span>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">완료 일수: </span>
-                          <span className="font-semibold">{challengeDetail.data.completedDays}/{challengeDetail.data.totalDays}일</span>
-                        </div>
+                        <Progress value={challengeDetail.data.progressRate} className="h-2" />
                       </div>
-                      <Progress value={challengeDetail.data.progressRate} className="h-3" />
                     </div>
 
-                    {/* 일별 진행 상황 */}
-                    {challengeDetail.data.dailyIntakes && challengeDetail.data.dailyIntakes.length > 0 ? (
-                      <div className="space-y-3">
-                        <h4 className="font-semibold">일별 기록</h4>
-                        <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                          {challengeDetail.data.dailyIntakes.map((daily, index) => (
-                            <Card key={index} className="p-3">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="font-medium">{daily.date}</span>
-                                {daily.dayColor && (
-                                  <Badge 
-                                    variant="outline"
-                                    className={
-                                      daily.dayColor === "GREEN" ? "bg-green-50 text-green-700 border-green-300" :
-                                      daily.dayColor === "YELLOW" ? "bg-yellow-50 text-yellow-700 border-yellow-300" :
-                                      "bg-red-50 text-red-700 border-red-300"
-                                    }
-                                  >
-                                    {daily.dayColor}
-                                  </Badge>
-                                )}
-                              </div>
-                              <div className="grid grid-cols-2 gap-2 text-sm">
-                                {daily.totalKcal !== null && (
-                                  <div>
-                                    <span className="text-muted-foreground">칼로리: </span>
-                                    <span>{daily.totalKcal.toFixed(0)} kcal</span>
-                                  </div>
-                                )}
-                                {daily.totalSodiumMg !== null && (
-                                  <div>
-                                    <span className="text-muted-foreground">나트륨: </span>
-                                    <span>{daily.totalSodiumMg.toFixed(0)} mg</span>
-                                  </div>
-                                )}
-                                {daily.totalProteinG !== null && (
-                                  <div>
-                                    <span className="text-muted-foreground">단백질: </span>
-                                    <span>{daily.totalProteinG.toFixed(1)} g</span>
-                                  </div>
-                                )}
-                                {daily.totalCarbG !== null && (
-                                  <div>
-                                    <span className="text-muted-foreground">탄수화물: </span>
-                                    <span>{daily.totalCarbG.toFixed(1)} g</span>
-                                  </div>
-                                )}
-                                {daily.dayScore !== null && (
-                                  <div className="col-span-2">
-                                    <span className="text-muted-foreground">일일 점수: </span>
-                                    <span className="font-semibold">{daily.dayScore.toFixed(1)}</span>
-                                  </div>
-                                )}
-                              </div>
-                            </Card>
-                          ))}
+                    {/* 일별 기록 - 스크롤 영역 */}
+                    <div className="flex-1 overflow-y-auto px-4 py-3 min-h-0" style={{ scrollbarWidth: 'thin', maxHeight: 'calc(85vh - 200px)' }}>
+                      {challengeDetail.data.dailyIntakes && challengeDetail.data.dailyIntakes.length > 0 ? (
+                        <div className="space-y-2">
+                          <h4 className="text-xs font-semibold">일별 기록</h4>
+                          <div className="space-y-2">
+                            {challengeDetail.data.dailyIntakes.map((daily, index) => (
+                              <Card key={index} className="p-3">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-sm font-medium">{daily.date}</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                  {daily.totalKcal !== null && (
+                                    <div>
+                                      <span className="text-muted-foreground">칼로리: </span>
+                                      <span>{daily.totalKcal.toFixed(0)} kcal</span>
+                                    </div>
+                                  )}
+                                  {daily.totalSodiumMg !== null && (
+                                    <div>
+                                      <span className="text-muted-foreground">나트륨: </span>
+                                      <span>{daily.totalSodiumMg.toFixed(0)} mg</span>
+                                    </div>
+                                  )}
+                                  {daily.totalProteinG !== null && (
+                                    <div>
+                                      <span className="text-muted-foreground">단백질: </span>
+                                      <span>{daily.totalProteinG.toFixed(1)} g</span>
+                                    </div>
+                                  )}
+                                  {daily.totalCarbG !== null && (
+                                    <div>
+                                      <span className="text-muted-foreground">탄수화물: </span>
+                                      <span>{daily.totalCarbG.toFixed(1)} g</span>
+                                    </div>
+                                  )}
+                                  {daily.dayScore !== null && (
+                                    <div className="col-span-2">
+                                      <span className="text-muted-foreground">일일 점수: </span>
+                                      <span className="font-semibold">{daily.dayScore.toFixed(1)}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </Card>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="text-center py-8 text-muted-foreground">
-                        <p>아직 기록이 없어요</p>
-                        <p className="text-sm mt-2">식사 기록을 시작하면 여기에 표시돼요</p>
-                      </div>
-                    )}
-                  </div>
+                      ) : (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <p className="text-sm">아직 기록이 없어요</p>
+                          <p className="text-xs mt-1">식사 기록을 시작하면 여기에 표시돼요</p>
+                        </div>
+                      )}
+                    </div>
+                  </>
                 ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <p>상세 정보를 불러올 수 없어요</p>
+                  <div className="text-center py-8 text-muted-foreground flex-1">
+                    <p className="text-sm">상세 정보를 불러올 수 없어요</p>
                   </div>
                 )}
                 
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setIsDetailDialogOpen(false)}>
+                <DialogFooter className="flex-shrink-0 px-4 pt-3 pb-4 border-t">
+                  <Button variant="outline" size="sm" onClick={() => setIsDetailDialogOpen(false)}>
                     닫기
                   </Button>
                 </DialogFooter>

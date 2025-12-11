@@ -41,8 +41,8 @@ api.interceptors.response.use(
   (error) => {
     const status = error.response?.status;
     
-    if (status === 401) {
-      // 401 Unauthorized 에러 시 로그아웃 처리
+    if (status === 401 || status === 403) {
+      // 401 Unauthorized 또는 403 Forbidden 에러 시 로그아웃 처리
       localStorage.removeItem("tokenData");
       // 로그인 페이지로 리다이렉트 (필요시)
       if (window.location.pathname !== "/login") {
