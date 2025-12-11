@@ -208,8 +208,8 @@ export function HomePage() {
             ? Math.round(summary.averageKcalPerMeal) 
             : 0;
           
-          // 빨간 날 개수 계산 (trends에서 dayColor가 "RED"인 날)
-          const redDays = trends.days.filter(day => day.dayColor === "RED").length;
+          // 빨간 날 개수 계산 (summary.overeatDays를 직접 사용 - 백엔드에서 이미 계산됨)
+          const redDays = summary.overeatDays ?? 0;
           
           // 기록한 날 개수 (trends에 데이터가 있는 날)
           const recordedDays = trends.days.filter(day => day.totalKcal !== null).length;
