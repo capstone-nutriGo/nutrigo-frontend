@@ -163,6 +163,7 @@ export function InsightsPage() {
         ).padStart(2, "0")}`;
 
         const res = await fetchCalendar(startDate, endDate);
+        console.log("[InsightsPage] fetchCalendar response:", res);
 
         const mapped: CalendarDayWithLevel[] = res.data.days.map((day) => {
           const dateObj = new Date(day.date);
@@ -173,9 +174,14 @@ export function InsightsPage() {
           };
         });
 
+        console.log("[InsightsPage] mapped calendar data:", mapped);
         setCalendarData(mapped);
       } catch (e) {
-        console.error(e);
+        console.error("[InsightsPage] fetchCalendar error:", e);
+        if (e instanceof Error) {
+          console.error("[InsightsPage] error message:", e.message);
+          console.error("[InsightsPage] error stack:", e.stack);
+        }
         setError("캘린더 데이터를 불러오는 중 오류가 발생했습니다.");
       } finally {
         setIsLoadingCalendar(false);
@@ -193,11 +199,18 @@ export function InsightsPage() {
         setIsLoadingWeeklySummary(true);
         const today = new Date();
         const baseDate = today.toISOString().split('T')[0];
+        console.log("[InsightsPage] getWeeklySummary 호출 - baseDate:", baseDate);
         const res = await getWeeklySummary(baseDate);
+        console.log("[InsightsPage] getWeeklySummary 응답:", res);
         setWeeklySummary(res);
       } catch (error) {
-        console.error("주간 요약 로드 실패:", error);
+        console.error("[InsightsPage] 주간 요약 로드 실패:", error);
+        if (error instanceof Error) {
+          console.error("[InsightsPage] error message:", error.message);
+          console.error("[InsightsPage] error stack:", error.stack);
+        }
         // 에러가 발생해도 화면은 표시되도록 함
+        setWeeklySummary(null);
       } finally {
         setIsLoadingWeeklySummary(false);
       }
