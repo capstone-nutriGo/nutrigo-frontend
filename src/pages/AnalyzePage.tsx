@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -16,6 +16,11 @@ import { toast } from "sonner@2.0.3";
 import { motion } from "motion/react";
 import { Textarea } from "../components/ui/textarea";
 import { Slider } from "../components/ui/slider";
+import { getPresignedUrl, uploadToS3 } from "../api/storage";
+import { analyzeOrderImage } from "../api/nutrition";
+import { useAuth } from "../contexts/AuthContext";
+import { fetchDayMeals, DayMealsResponse, createInsightLog } from "../api/insight";
+import axios from "axios";
 
 interface MealRecord {
   id: string;
@@ -26,6 +31,16 @@ interface MealRecord {
     name: string;
     restaurant: string;
     consumption: number; // 0-100, 섭취량 (%)
+    topping?: string; // 토핑/추가재료 정보
+    baseKcal?: number; // 원본 칼로리 (100% 기준)
+    baseProtein?: number; // 원본 단백질 (100% 기준)
+    baseCarbs?: number; // 원본 탄수화물 (100% 기준)
+    baseSodium?: number; // 원본 나트륨 (100% 기준)
+    // 텍스트 입력 모드용 추정값 (UI 표시용)
+    estimatedKcal?: number;
+    estimatedProtein?: number;
+    estimatedCarbs?: number;
+    estimatedSodium?: number;
   }[];
   nutrition: {
     calories: number;
@@ -39,55 +54,132 @@ interface MealRecord {
 }
 
 export function AnalyzePage() {
+  const { tokenData } = useAuth();
   const [screenshot, setScreenshot] = useState<File | null>(null);
   const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<MealRecord | null>(null);
+  const [s3Key, setS3Key] = useState<string | null>(null); // S3 키 저장
   const [mealDate, setMealDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [mealTime, setMealTime] = useState<"아침" | "점심" | "저녁" | "야식">("점심");
   const [inputMode, setInputMode] = useState<"photo" | "text">("photo");
-  const [textMealItems, setTextMealItems] = useState<Array<{ name: string; restaurant: string }>>([
-    { name: "", restaurant: "" }
+  const [textMealItems, setTextMealItems] = useState<Array<{ name: string; restaurant: string; topping: string }>>([
+    { name: "", restaurant: "", topping: "" }
   ]);
-  const [recentRecords, setRecentRecords] = useState<MealRecord[]>([
-    {
-      id: "1",
-      date: "2025-11-27",
-      time: "19:30",
-      mealTime: "저녁",
-      items: [
-        { name: "치킨", restaurant: "치킨플러스", consumption: 100 },
-        { name: "라 1.5L", restaurant: "치킨플러스", consumption: 100 }
-      ],
-      nutrition: {
-        calories: 1850,
-        protein: 85,
-        carbs: 120,
-        sodium: 3200
-      },
-      sodiumLevel: "고나트륨",
-      calorieLevel: "과식",
-      imageName: "chicken_order.png"
-    },
-    {
-      id: "2",
-      date: "2025-11-26",
-      time: "12:20",
-      mealTime: "점심",
-      items: [
-        { name: "비빔밥", restaurant: "한식당", consumption: 100 }
-      ],
-      nutrition: {
-        calories: 650,
-        protein: 28,
-        carbs: 95,
-        sodium: 1400
-      },
-      sodiumLevel: "적정",
-      calorieLevel: "적정",
-      imageName: "bibimbap_order.png"
+  const [recentRecords, setRecentRecords] = useState<MealRecord[]>([]);
+  const [isLoadingRecords, setIsLoadingRecords] = useState(false);
+
+  // 최근 기록 가져오기 함수 (재사용 가능하도록 분리)
+  const loadRecentRecords = async () => {
+    setIsLoadingRecords(true);
+    try {
+      const records: MealRecord[] = [];
+      const today = new Date();
+      
+      // 최근 7일간의 데이터 가져오기
+      for (let i = 0; i < 7; i++) {
+        const date = new Date(today);
+        date.setDate(today.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0];
+        
+        try {
+          const response: DayMealsResponse = await fetchDayMeals(dateStr);
+          if (response.success && response.data.meals && response.data.meals.length > 0) {
+            // 같은 날짜의 식사들을 그룹화
+            const mealsByTime: { [key: string]: any[] } = {};
+            response.data.meals.forEach((meal: any) => {
+              const mealTimeKey = meal.mealTime || "SNACK";
+              if (!mealsByTime[mealTimeKey]) {
+                mealsByTime[mealTimeKey] = [];
+              }
+              mealsByTime[mealTimeKey].push(meal);
+            });
+            
+            // 각 시간대별로 MealRecord 생성
+            Object.entries(mealsByTime).forEach(([mealTimeKey, meals]) => {
+              const mealTimeMap: { [key: string]: "아침" | "점심" | "저녁" | "야식" } = {
+                "BREAKFAST": "아침",
+                "LUNCH": "점심",
+                "DINNER": "저녁",
+                "SNACK": "야식",
+                "NIGHT": "야식"
+              };
+              
+              const mealTime = mealTimeMap[mealTimeKey] || "점심";
+              const firstMeal = meals[0];
+              const createdAt = firstMeal.createdAt ? new Date(firstMeal.createdAt) : new Date(dateStr + "T12:00:00");
+              const timeStr = `${createdAt.getHours().toString().padStart(2, '0')}:${createdAt.getMinutes().toString().padStart(2, '0')}`;
+              
+              // 영양소 합계 계산
+              const totalKcal = meals.reduce((sum, m) => sum + (m.kcal ?? 0), 0);
+              const totalProtein = meals.reduce((sum, m) => sum + (m.proteinG ?? 0), 0);
+              const totalCarbs = meals.reduce((sum, m) => sum + (m.carbG ?? 0), 0);
+              const totalSodium = meals.reduce((sum, m) => sum + (m.sodiumMg ?? 0), 0);
+              
+              // 나트륨 레벨 판단
+              let sodiumLevel: "저나트륨" | "적정" | "고나트륨" = "적정";
+              if (totalSodium > 2000) {
+                sodiumLevel = "고나트륨";
+              } else if (totalSodium < 1000) {
+                sodiumLevel = "저나트륨";
+              }
+              
+              // 칼로리 레벨 판단
+              let calorieLevel: "적정" | "과식" = "적정";
+              if (totalKcal > 800) {
+                calorieLevel = "과식";
+              }
+              
+              records.push({
+                id: `meal-${firstMeal.mealLogId}`,
+                date: dateStr,
+                time: timeStr,
+                mealTime: mealTime,
+                items: meals.map((meal) => ({
+                  name: meal.menu || "알 수 없음",
+                  restaurant: meal.category || "", // 카테고리가 없으면 빈 문자열
+                  consumption: 100
+                })),
+                nutrition: {
+                  calories: Math.round(totalKcal),
+                  protein: Math.round(totalProtein),
+                  carbs: Math.round(totalCarbs),
+                  sodium: Math.round(totalSodium)
+                },
+                sodiumLevel: sodiumLevel,
+                calorieLevel: calorieLevel,
+                imageName: ""
+              });
+            });
+          }
+        } catch (error) {
+          // 특정 날짜의 데이터가 없으면 무시하고 다음 날짜로 진행
+          console.debug(`날짜 ${dateStr}의 데이터를 가져오지 못했습니다:`, error);
+        }
+      }
+      
+      // 날짜와 시간 순으로 정렬 (최신순)
+      records.sort((a, b) => {
+        const dateCompare = b.date.localeCompare(a.date);
+        if (dateCompare !== 0) return dateCompare;
+        return b.time.localeCompare(a.time);
+      });
+      
+      // 최대 10개만 표시
+      setRecentRecords(records.slice(0, 10));
+    } catch (error) {
+      console.error("최근 기록을 가져오는 중 오류:", error);
+      toast.error("최근 기록을 불러오는데 실패했습니다.");
+    } finally {
+      setIsLoadingRecords(false);
     }
-  ]);
+  };
+
+  // 최근 기록 가져오기 (컴포넌트 마운트 시)
+  useEffect(() => {
+    loadRecentRecords();
+  }, []); // 컴포넌트 마운트 시 한 번만 실행
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -129,60 +221,342 @@ export function AnalyzePage() {
     }
 
     setIsAnalyzing(true);
+    setIsUploading(false);
 
-    // AI 분석 시뮬레이션
-    await new Promise((resolve) => setTimeout(resolve, 2500));
+    try {
+      let s3Key: string | undefined;
 
-    // 텍스트 입력 모드인 경우 입력한 음식 정보 사용 (기본 섭취량 100%로 설정)
-    const items = inputMode === "text" 
-      ? textMealItems
-          .filter(item => item.name.trim() !== "")
-          .map(item => ({ ...item, consumption: 100 }))
-      : [
-          { name: "까르보나라 파스타", restaurant: "파스타 하우스", consumption: 100 },
-          { name: "콜라", restaurant: "파스타 하우스", consumption: 100 }
-        ];
+      // 사진 모드인 경우: 옵션 A(권장) - 한 번의 버튼 클릭으로 자동 처리되는 3단계 시퀀스
+      if (inputMode === "photo" && screenshot) {
+        setIsUploading(true);
+        toast.info("이미지 업로드 중...");
 
-    // 모의 분석 결과
-    const mockResult: MealRecord = {
-      id: Date.now().toString(),
-      date: mealDate,
-      time: getTimeByMealTime(mealTime),
-      mealTime: mealTime,
-      items: items,
-      nutrition: {
-        calories: 980,
-        protein: 32,
-        carbs: 115,
-        sodium: 2100
-      },
-      sodiumLevel: "고나트륨",
-      calorieLevel: "과식",
-      imageName: inputMode === "photo" ? screenshot?.name || "" : "text_input"
-    };
+        // 파일 확장자와 MIME 타입 추출
+        const fileExtension = screenshot.name.split('.').pop()?.toLowerCase() || 'jpg';
+        const contentType = screenshot.type || `image/${fileExtension === 'jpg' ? 'jpeg' : fileExtension}`;
 
-    setAnalysisResult(mockResult);
-    setIsAnalyzing(false);
-    toast.success("분석이 완료되었어요! 🎉");
+        // === 단계 1: 백엔드에서 presigned URL 요청 ===
+        const presignedData = await getPresignedUrl({
+          fileExtension,
+          contentType,
+        });
+
+        // === 단계 2: 프론트엔드에서 S3에 직접 PUT 업로드 ===
+        await uploadToS3(presignedData.presignedUrl, screenshot, contentType);
+        s3Key = presignedData.key;
+
+        setIsUploading(false);
+        toast.success("이미지 업로드 완료! 분석 중...");
+      }
+
+      // === 단계 3: 업로드 성공 시 바로 분석 API 호출 (S3 key 전달) ===
+      if (inputMode === "photo" && s3Key) {
+        // mealTime을 백엔드 형식으로 변환
+        const mealTimeMap: Record<"아침" | "점심" | "저녁" | "야식", "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK"> = {
+          "아침": "BREAKFAST",
+          "점심": "LUNCH",
+          "저녁": "DINNER",
+          "야식": "SNACK",
+        };
+
+        const analysisResponse = await analyzeOrderImage({
+          s3_key: s3Key,
+          order_date: mealDate,
+          meal_time: mealTimeMap[mealTime],
+          capture_id: `capture_${Date.now()}`,
+        });
+
+        // 분석 결과를 MealRecord 형식으로 변환
+        if (analysisResponse.data && analysisResponse.data.items) {
+          const totalNutrition = analysisResponse.data.items.reduce(
+            (acc, item) => ({
+              calories: acc.calories + item.kcal,
+              protein: acc.protein + item.protein_g,
+              carbs: acc.carbs + item.carb_g,
+              sodium: acc.sodium + item.sodium_mg,
+            }),
+            { calories: 0, protein: 0, carbs: 0, sodium: 0 }
+          );
+
+          const items = analysisResponse.data.items.map((item) => {
+            // 카테고리가 비어있거나 null이면 메뉴명에서 추론 시도
+            let category = item.category;
+            if (!category || category.trim() === "" || category === "알 수 없음") {
+              // 메뉴명에서 카테고리 추론 (간단한 휴리스틱)
+              const menuName = item.menu.toLowerCase();
+              if (menuName.includes("초밥") || menuName.includes("회") || menuName.includes("연어") || menuName.includes("담다")) {
+                category = "일식";
+              } else if (menuName.includes("짜장") || menuName.includes("짬뽕") || menuName.includes("볶음밥") || menuName.includes("탕수육")) {
+                category = "중식";
+              } else if (menuName.includes("비빔밥") || menuName.includes("한우") || menuName.includes("생육회")) {
+                category = "한식";
+              } else if (menuName.includes("치킨") || menuName.includes("깐풍") || menuName.includes("윙")) {
+                category = "치킨";
+              } else {
+                category = "기타";
+              }
+            }
+            
+            return {
+              name: item.menu,
+              restaurant: category,
+              consumption: 100,
+              // 원본 영양소 데이터 저장 (섭취량 계산용)
+              baseKcal: item.kcal,
+              baseProtein: item.protein_g,
+              baseCarbs: item.carb_g,
+              baseSodium: item.sodium_mg,
+            };
+          });
+
+          const result: MealRecord = {
+            id: analysisResponse.data.capture_id,
+            date: mealDate,
+            time: getTimeByMealTime(mealTime),
+            mealTime: mealTime,
+            items: items,
+            nutrition: totalNutrition,
+            sodiumLevel: totalNutrition.sodium > 2000 ? "고나트륨" : totalNutrition.sodium < 1000 ? "저나트륨" : "적정",
+            calorieLevel: totalNutrition.calories > 2000 ? "과식" : "적정",
+            imageName: screenshot?.name || "",
+          };
+
+          setAnalysisResult(result);
+          toast.success("분석이 완료되었어요! 🎉");
+        } else {
+          throw new Error("분석 결과가 없습니다.");
+        }
+      } else if (inputMode === "text") {
+        // 텍스트 입력 모드인 경우
+        const validItems = textMealItems.filter(item => item.name.trim() !== "");
+        
+        // 메뉴명에서 영양소를 추정하는 함수
+        const estimateNutrition = (menuName: string): { kcal: number; protein: number; carbs: number; sodium: number } => {
+          const name = menuName.toLowerCase();
+          
+          // 간단한 휴리스틱으로 영양소 추정
+          if (name.includes("짜장") || name.includes("짬뽕")) {
+            return { kcal: 650, protein: 20, carbs: 100, sodium: 1800 };
+          } else if (name.includes("볶음밥")) {
+            return { kcal: 550, protein: 15, carbs: 90, sodium: 1200 };
+          } else if (name.includes("비빔밥")) {
+            return { kcal: 600, protein: 18, carbs: 85, sodium: 1500 };
+          } else if (name.includes("초밥") || name.includes("회")) {
+            return { kcal: 500, protein: 25, carbs: 80, sodium: 1000 };
+          } else if (name.includes("치킨")) {
+            return { kcal: 800, protein: 35, carbs: 50, sodium: 2000 };
+          } else if (name.includes("라면")) {
+            return { kcal: 500, protein: 12, carbs: 70, sodium: 2500 };
+          } else if (name.includes("김밥")) {
+            return { kcal: 400, protein: 10, carbs: 60, sodium: 1200 };
+          } else if (name.includes("국밥") || name.includes("국수")) {
+            return { kcal: 450, protein: 15, carbs: 65, sodium: 1800 };
+          } else if (name.includes("떡볶이")) {
+            return { kcal: 350, protein: 8, carbs: 70, sodium: 1500 };
+          } else if (name.includes("탕수육")) {
+            return { kcal: 700, protein: 25, carbs: 80, sodium: 1500 };
+          } else {
+            // 기본값 (한식 기준)
+            return { kcal: 500, protein: 15, carbs: 75, sodium: 1500 };
+          }
+        };
+        
+        // 각 아이템에 대해 카테고리 및 영양소 추론
+        const items = validItems.map(item => {
+          // 카테고리가 비어있거나 null이면 메뉴명에서 추론 시도
+          let category = item.restaurant;
+          if (!category || category.trim() === "" || category === "알 수 없음") {
+            const menuName = item.name.toLowerCase();
+            if (menuName.includes("초밥") || menuName.includes("회") || menuName.includes("연어") || menuName.includes("담다")) {
+              category = "일식";
+            } else if (menuName.includes("짜장") || menuName.includes("짬뽕") || menuName.includes("볶음밥") || menuName.includes("탕수육")) {
+              category = "중식";
+            } else if (menuName.includes("비빔밥") || menuName.includes("한우") || menuName.includes("생육회") || menuName.includes("김치") || menuName.includes("된장") || menuName.includes("국밥")) {
+              category = "한식";
+            } else if (menuName.includes("치킨") || menuName.includes("깐풍") || menuName.includes("윙")) {
+              category = "치킨";
+            } else {
+              category = "기타";
+            }
+          }
+          
+          // 메뉴명에서 영양소 추정
+          const estimated = estimateNutrition(item.name);
+          
+          return {
+            name: item.name,
+            restaurant: category,
+            consumption: 100,
+            // 토핑 정보 저장 (foodDescription에 사용)
+            topping: item.topping || "",
+            // UI 표시용 추정 영양소 (nutrition 객체에 사용)
+            // 저장 시에는 백엔드에서 더 정확하게 추론하도록 undefined로 설정
+            baseKcal: undefined, // 백엔드에서 추론
+            baseProtein: undefined,
+            baseCarbs: undefined,
+            baseSodium: undefined,
+            // UI 표시용 추정값 (별도 필드로 저장)
+            estimatedKcal: estimated.kcal,
+            estimatedProtein: estimated.protein,
+            estimatedCarbs: estimated.carbs,
+            estimatedSodium: estimated.sodium,
+          };
+        });
+
+        // 전체 영양소 합계 계산 (추정값 사용)
+        const totalNutrition = items.reduce(
+          (acc, item) => ({
+            calories: acc.calories + (item.estimatedKcal || item.baseKcal || 0),
+            protein: acc.protein + (item.estimatedProtein || item.baseProtein || 0),
+            carbs: acc.carbs + (item.estimatedCarbs || item.baseCarbs || 0),
+            sodium: acc.sodium + (item.estimatedSodium || item.baseSodium || 0),
+          }),
+          { calories: 0, protein: 0, carbs: 0, sodium: 0 }
+        );
+
+        // 나트륨 레벨 판단
+        let sodiumLevel: "저나트륨" | "적정" | "고나트륨" = "적정";
+        if (totalNutrition.sodium > 2000) {
+          sodiumLevel = "고나트륨";
+        } else if (totalNutrition.sodium < 1000) {
+          sodiumLevel = "저나트륨";
+        }
+
+        // 칼로리 레벨 판단
+        let calorieLevel: "적정" | "과식" = "적정";
+        if (totalNutrition.calories > 800) {
+          calorieLevel = "과식";
+        }
+
+        const mockResult: MealRecord = {
+          id: Date.now().toString(),
+          date: mealDate,
+          time: getTimeByMealTime(mealTime),
+          mealTime: mealTime,
+          items: items,
+          nutrition: totalNutrition,
+          sodiumLevel: sodiumLevel,
+          calorieLevel: calorieLevel,
+          imageName: "text_input"
+        };
+
+        setAnalysisResult(mockResult);
+        toast.success("분석이 완료되었어요! 🎉");
+      }
+    } catch (error: any) {
+      console.error("분석 중 오류:", error);
+      toast.error(error.message || "분석 중 오류가 발생했습니다.");
+    } finally {
+      setIsAnalyzing(false);
+      setIsUploading(false);
+    }
   };
 
-  const handleSaveRecord = () => {
+  const handleSaveRecord = async () => {
     if (!analysisResult) return;
 
-    setRecentRecords([analysisResult, ...recentRecords]);
-    toast.success("캘린더에 기록되었어요!");
-    
-    // 초기화
-    setScreenshot(null);
-    setScreenshotPreview(null);
-    setAnalysisResult(null);
-    setMealDate(new Date().toISOString().split('T')[0]);
-    setMealTime("점심");
-    setTextMealItems([{ name: "", restaurant: "" }]);
+    try {
+      // mealTime을 백엔드 형식으로 변환
+      const mealTimeMap: Record<"아침" | "점심" | "저녁" | "야식", "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK"> = {
+        "아침": "BREAKFAST",
+        "점심": "LUNCH",
+        "저녁": "DINNER",
+        "야식": "SNACK",
+      };
+
+      const mealTimeEnum = mealTimeMap[analysisResult.mealTime];
+      
+      // S3 키가 있으면 presigned GET URL 생성
+      let foodImageUrl: string | undefined = undefined;
+      if (s3Key) {
+        try {
+          // 백엔드에서 presigned GET URL 요청
+          const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
+          const presignedGetData = await axios.post<{ success: boolean; data: { presignedUrl: string } }>(
+            `${API_BASE_URL}/api/v1/storage/presigned-get-url`,
+            { key: s3Key },
+            { withCredentials: true }
+          );
+          foodImageUrl = presignedGetData.data.data.presignedUrl;
+        } catch (error) {
+          console.warn("Presigned GET URL 생성 실패, 이미지 없이 저장합니다:", error);
+        }
+      }
+
+      // 각 메뉴 항목에 대해 순차적으로 저장 (Deadlock 방지)
+      for (const item of analysisResult.items) {
+        // 섭취량을 serving으로 변환 (consumption이 100이면 1.0, 50이면 0.5)
+        const serving = (item.consumption ?? 100) / 100;
+
+        // 영양소 정보가 있으면 사용, 없으면 백엔드에서 추론하도록 undefined 전달
+        let adjustedKcal: number | undefined = undefined;
+        let adjustedSodium: number | undefined = undefined;
+        let adjustedProtein: number | undefined = undefined;
+        let adjustedCarbs: number | undefined = undefined;
+
+        // baseKcal 등이 정의되어 있고 0보다 크면 사용
+        if (item.baseKcal !== undefined && item.baseKcal > 0) {
+          adjustedKcal = item.baseKcal * serving;
+        }
+        if (item.baseSodium !== undefined && item.baseSodium > 0) {
+          adjustedSodium = item.baseSodium * serving;
+        }
+        if (item.baseProtein !== undefined && item.baseProtein > 0) {
+          adjustedProtein = item.baseProtein * serving;
+        }
+        if (item.baseCarbs !== undefined && item.baseCarbs > 0) {
+          adjustedCarbs = item.baseCarbs * serving;
+        }
+
+        // foodDescription 생성 (메뉴명, 식당명, 토핑 정보 포함)
+        let foodDescription = item.name;
+        if (item.restaurant && item.restaurant.trim() !== "" && item.restaurant !== "알 수 없음" && item.restaurant !== "분석 결과" && item.restaurant !== "기타") {
+          foodDescription += ` (${item.restaurant})`;
+        }
+        if (item.topping && item.topping.trim() !== "") {
+          foodDescription += ` - ${item.topping}`;
+        }
+
+        // createInsightLog 호출 (백엔드 API 구조에 맞게, 영양소 정보 직접 전달)
+        await createInsightLog({
+          menu: item.name,
+          foodImageUrl: foodImageUrl,
+          foodDescription: foodDescription,
+          serving: serving,
+          mealtime: mealTimeEnum,
+          mealDate: analysisResult.date, // "YYYY-MM-DD" 형식
+          // 이미 분석된 영양소 정보가 있으면 전달, 없으면 백엔드에서 추론
+          kcal: adjustedKcal,
+          sodiumMg: adjustedSodium,
+          proteinG: adjustedProtein,
+          carbG: adjustedCarbs,
+          // 카테고리 정보 전달 (기타가 아닌 경우만)
+          category: item.restaurant && item.restaurant !== "알 수 없음" && item.restaurant !== "분석 결과" && item.restaurant !== "기타"
+            ? item.restaurant 
+            : undefined,
+        });
+      }
+      
+      toast.success("캘린더에 기록되었어요!");
+      
+      // 최근 기록 다시 불러오기
+      await loadRecentRecords();
+      
+      // 초기화
+      setScreenshot(null);
+      setScreenshotPreview(null);
+      setAnalysisResult(null);
+      setMealDate(new Date().toISOString().split('T')[0]);
+      setMealTime("점심");
+      setTextMealItems([{ name: "", restaurant: "", topping: "" }]);
+    } catch (error: any) {
+      console.error("기록 저장 중 오류:", error);
+      toast.error(error.message || "기록 저장 중 오류가 발생했습니다.");
+    }
   };
 
   const addMealItem = () => {
-    setTextMealItems([...textMealItems, { name: "", restaurant: "" }]);
+    setTextMealItems([...textMealItems, { name: "", restaurant: "", topping: "" }]);
   };
 
   const removeMealItem = (index: number) => {
@@ -191,7 +565,7 @@ export function AnalyzePage() {
     }
   };
 
-  const updateMealItem = (index: number, field: "name" | "restaurant", value: string) => {
+  const updateMealItem = (index: number, field: "name" | "restaurant" | "topping", value: string) => {
     const updated = [...textMealItems];
     updated[index] = { ...updated[index], [field]: value };
     setTextMealItems(updated);
@@ -199,13 +573,53 @@ export function AnalyzePage() {
 
   const updateAnalysisItemConsumption = (index: number, consumption: number) => {
     if (!analysisResult) return;
-    const updated = { ...analysisResult };
-    const currentItem = updated.items[index];
-    updated.items[index] = { 
-      ...currentItem, 
+    
+    const updatedItems = [...analysisResult.items];
+    updatedItems[index] = {
+      ...updatedItems[index],
       consumption: consumption ?? 100 
     };
-    setAnalysisResult(updated);
+    
+    // 섭취량에 따라 영양소 재계산 (baseKcal이 있으면 사용, 없으면 estimatedKcal 사용)
+    const recalculatedNutrition = updatedItems.reduce(
+      (acc, item) => {
+        const consumptionRatio = (item.consumption ?? 100) / 100;
+        const baseKcal = item.baseKcal ?? item.estimatedKcal ?? 0;
+        const baseProtein = item.baseProtein ?? item.estimatedProtein ?? 0;
+        const baseCarbs = item.baseCarbs ?? item.estimatedCarbs ?? 0;
+        const baseSodium = item.baseSodium ?? item.estimatedSodium ?? 0;
+        
+        return {
+          calories: acc.calories + Math.round(baseKcal * consumptionRatio),
+          protein: acc.protein + Math.round(baseProtein * consumptionRatio),
+          carbs: acc.carbs + Math.round(baseCarbs * consumptionRatio),
+          sodium: acc.sodium + Math.round(baseSodium * consumptionRatio)
+        };
+      },
+      { calories: 0, protein: 0, carbs: 0, sodium: 0 }
+    );
+    
+    // 나트륨 레벨 재계산
+    let sodiumLevel: "저나트륨" | "적정" | "고나트륨" = "적정";
+    if (recalculatedNutrition.sodium > 2000) {
+      sodiumLevel = "고나트륨";
+    } else if (recalculatedNutrition.sodium < 1000) {
+      sodiumLevel = "저나트륨";
+    }
+    
+    // 칼로리 레벨 재계산
+    let calorieLevel: "적정" | "과식" = "적정";
+    if (recalculatedNutrition.calories > 800) {
+      calorieLevel = "과식";
+    }
+    
+    setAnalysisResult({
+      ...analysisResult,
+      items: updatedItems,
+      nutrition: recalculatedNutrition,
+      sodiumLevel: sodiumLevel,
+      calorieLevel: calorieLevel
+    });
   };
 
   const getSodiumColor = (level: string) => {
@@ -257,7 +671,7 @@ export function AnalyzePage() {
                     variant={inputMode === "photo" ? "default" : "outline"}
                     onClick={() => {
                       setInputMode("photo");
-                      setTextMealItems([{ name: "", restaurant: "" }]);
+                      setTextMealItems([{ name: "", restaurant: "", topping: "" }]);
                     }}
                     className="flex-1"
                   >
@@ -339,6 +753,15 @@ export function AnalyzePage() {
                                 placeholder="예: 치킨플러스, 한식당"
                                 value={item.restaurant}
                                 onChange={(e) => updateMealItem(index, "restaurant", e.target.value)}
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor={`topping-${index}`}>토핑/추가재료 (선택)</Label>
+                              <Input
+                                id={`topping-${index}`}
+                                placeholder="예: 치즈 추가, 계란 추가, 양파 빼기"
+                                value={item.topping}
+                                onChange={(e) => updateMealItem(index, "topping", e.target.value)}
                               />
                             </div>
                           </div>
@@ -579,7 +1002,12 @@ export function AnalyzePage() {
             )}
 
             {/* 최근 기록 */}
-            {recentRecords.length > 0 && (
+            {isLoadingRecords ? (
+              <div className="text-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">최근 기록을 불러오는 중...</p>
+              </div>
+            ) : recentRecords.length > 0 ? (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -598,7 +1026,10 @@ export function AnalyzePage() {
                             <div className="space-y-1">
                               {record.items.map((item, index) => (
                                 <p key={index} className="text-sm">
-                                  {item.name} <span className="text-muted-foreground">({item.restaurant})</span>
+                                  {item.name}
+                                  {item.restaurant && item.restaurant.trim() !== "" && (
+                                    <span className="text-muted-foreground"> ({item.restaurant})</span>
+                                  )}
                                   {item.consumption !== 100 && (
                                     <span className="text-muted-foreground ml-2">- {item.consumption}%</span>
                                   )}
@@ -620,6 +1051,10 @@ export function AnalyzePage() {
                   ))}
                 </div>
               </motion.div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <p>아직 기록된 식사가 없어요. 첫 식사를 기록해보세요! 🍽️</p>
+              </div>
             )}
           </div>
         </motion.div>

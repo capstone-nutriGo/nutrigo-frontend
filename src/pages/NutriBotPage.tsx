@@ -8,6 +8,7 @@ import { ImageWithFallback } from "../components/figma/ImageWithFallback";
 import { Send, Sparkles, Bot, Calendar, TrendingUp, Flame } from "lucide-react";
 import { motion } from "motion/react";
 import nutribotImage from "figma:asset/71504baf4a13d6260836aac5e71a616ee87c746b.png";
+import { chatWithNutriBot } from "../api/nutribot";
 
 interface Message {
   id: string;
@@ -43,7 +44,7 @@ export function NutriBotPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
 
     const userMessage: Message = {
@@ -54,96 +55,47 @@ export function NutriBotPage() {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const messageToSend = inputValue;
     setInputValue("");
 
-    // AI 응답 시뮬레이션
-    setTimeout(() => {
-      const botResponse = generateBotResponse(inputValue);
+    try {
+      // 실제 API 호출
+      const response = await chatWithNutriBot(messageToSend);
+      
+      const botResponse: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "bot",
+        content: response.reply,
+        timestamp: new Date(),
+        suggestions: response.recommendedActions && response.recommendedActions.length > 0 
+          ? response.recommendedActions 
+          : undefined
+      };
+      
       setMessages(prev => [...prev, botResponse]);
-    }, 1000);
+    } catch (error: any) {
+      console.error("챗봇 응답 오류:", error);
+      console.error("에러 상세:", {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status,
+        config: error?.config
+      });
+      
+      const errorMessage = error?.response?.data?.message || 
+                          error?.message || 
+                          "죄송해요, 응답을 생성하는데 문제가 발생했어요. 잠시 후 다시 시도해주세요. 😅";
+      
+      const errorResponse: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "bot",
+        content: errorMessage,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, errorResponse]);
+    }
   };
 
-  const generateBotResponse = (userInput: string): Message => {
-    const input = userInput.toLowerCase();
-
-    // 기록 기반 응답
-    if (input.includes("어제") || input.includes("오늘")) {
-      return {
-        id: Date.now().toString(),
-        role: "bot",
-        content: "어제는 치킨과 콜라를 드셨네요! 칼로리가 1,850kcal, 나트륨이 3,200mg으로 조금 높았어요 😅\n\n오늘 저녁은 가볍게 먹어보는 건 어떨까요?\n\n추천 메뉴:\n• 비빔밥 (채소 많이)\n• 해물 칼국수 (국물 적게)\n• 샐러드 + 닭가슴살",
-        timestamp: new Date(),
-        suggestions: [
-          "이번 주 평균 칼로리는?",
-          "챌린지 진행 상황 알려줘"
-        ]
-      };
-    }
-
-    if (input.includes("이번 주") || input.includes("주간")) {
-      return {
-        id: Date.now().toString(),
-        role: "bot",
-        content: "이번 주 식습관 요약이에요! 📊\n\n• 평균 칼로리: 2,050kcal\n• 평균 나트륨: 2,400mg\n• 빨간 날: 2일 (목, 토)\n• 녹색 날: 4일\n\n지난주보다 평균 칼로리가 150kcal 낮아졌어요! 잘하고 계세요 💪\n\n다만 목요일과 토요일에 고칼로리 음식을 드셨네요. 다음 주에는 이 날들에 조금 더 가볍게 먹어보는 건 어떨까요?",
-        timestamp: new Date(),
-        suggestions: [
-          "많이 먹은 메뉴 TOP3 알려줘",
-          "나트륨 줄이는 팁 알려줘"
-        ]
-      };
-    }
-
-    if (input.includes("챌린지")) {
-      return {
-        id: Date.now().toString(),
-        role: "bot",
-        content: "현재 진행 중인 챌린지 현황이에요! 🎯\n\n1️⃣ 이번 주 빨간 날 3일 이하\n   → 현재 2일 (목표 달성 가능!)\n\n2️⃣ 주간 평균 칼로리 10% 낮추기\n   → 65% 달성 (거의 다 왔어요!)\n\n이대로만 하면 이번 주 2개 챌린지를 모두 클리어할 수 있어요! 화이팅! 🎉",
-        timestamp: new Date(),
-        suggestions: [
-          "남은 주에 뭘 먹으면 좋을까?",
-          "나트륨 낮은 메뉴 추천해줘"
-        ]
-      };
-    }
-
-    if (input.includes("추천") || input.includes("뭐 먹")) {
-      return {
-        id: Date.now().toString(),
-        role: "bot",
-        content: "지금 여러분의 상황을 고려한 추천이에요! 🍽️\n\n오늘은 가벼운 메뉴가 좋을 것 같아요:\n\n1. 비빔밥 (채소 드문뿍) - 650kcal, 적정 나트륨\n2. 연어 샐러드 - 420kcal, 저나트륨\n3. 토마토 파스타 - 520kcal, 적정 나트륨\n\n이 중에서 골라보세요! 어떤 게 끌리시나요? 😊",
-        timestamp: new Date(),
-        suggestions: [
-          "토마토 파스타 영양소 자세히 알려줘",
-          "오늘 야식은?"
-        ]
-      };
-    }
-
-    if (input.includes("나트륨") || input.includes("짜게")) {
-      return {
-        id: Date.now().toString(),
-        role: "bot",
-        content: "나트륨을 줄이는 간단한 팁이에요! 💧\n\n1. 국물 요리는 국물을 반만 먹기\n2. 소스는 '별도 제공' 옵션 선택하기\n3. 김치찌개보다 순두부찌개 선택하기\n4. 튀김보다는 구이 메뉴로\n5. 물을 충분히 마시기 (하루 2L)\n\n작은 습관부터 바꿔보세요. 몸이 달라지는 걸 느낄 수 있을 거예요! 😊",
-        timestamp: new Date(),
-        suggestions: [
-          "이번 주 나 어떻게 먹었어?",
-          "저나트륨 메뉴 추천해줘"
-        ]
-      };
-    }
-
-    // 기본 응답
-    return {
-      id: Date.now().toString(),
-      role: "bot",
-      content: "음, 잘 이해하지 못했어요 😅\n\n이런 걸 물어보시면 더 정확하게 답변할 수 있어요:\n\n• \"어제 너무 짜게 먹었는데 오늘 저녁 뭐 먹을까?\"\n• \"이번 주 나 어떻게 먹었어?\"\n• \"현재 진행 중인 챌린지 알려줘\"\n• \"나트륨 줄이는 팁 알려줘\"\n\n편하게 물어보세요! 😊",
-      timestamp: new Date(),
-      suggestions: [
-        "이번 주 나 어떻게 먹었어?",
-        "챌린지 진행 상황 알려줘"
-      ]
-    };
-  };
 
   const handleSuggestionClick = (suggestion: string) => {
     setInputValue(suggestion);

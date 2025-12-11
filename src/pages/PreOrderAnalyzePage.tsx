@@ -1,12 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Badge } from "../components/ui/badge";
-import { Camera, Link as LinkIcon, Loader2, Sparkles, TrendingDown, AlertCircle, Upload } from "lucide-react";
+import { Camera, Link as LinkIcon, Loader2, Sparkles, AlertCircle, Upload } from "lucide-react";
 import { toast } from "sonner@2.0.3";
 import { motion } from "motion/react";
+import { getProfile } from "../api/user";
+import { analyzeStoreLink, analyzeCartImage, NutritionAnalysisResponse } from "../api/nutrition";
+import { getPresignedUrl, uploadToS3 } from "../api/storage";
+import { useAuth } from "../contexts/AuthContext";
 
 interface MenuItem {
   name: string;
@@ -18,15 +22,38 @@ interface MenuItem {
 }
 
 interface AnalysisResult {
-  mainItem: MenuItem;
-  alternatives: MenuItem[];
+  recommendedMenus: MenuItem[];
 }
 
 export function PreOrderAnalyzePage() {
+  const { isLoggedIn } = useAuth();
   const [linkUrl, setLinkUrl] = useState("");
   const [screenshot, setScreenshot] = useState<File | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [userInfo, setUserInfo] = useState<{ gender: "male" | "female" | "other"; birthday: string } | null>(null);
+
+  // 사용자 정보 로드
+  useEffect(() => {
+    const loadUserInfo = async () => {
+      if (!isLoggedIn) return;
+      
+      try {
+        const profile = await getProfile();
+        if (profile.data && profile.data.gender && profile.data.birthday) {
+          setUserInfo({
+            gender: profile.data.gender.toLowerCase() as "male" | "female" | "other",
+            birthday: profile.data.birthday,
+          });
+        }
+      } catch (error) {
+        console.error("사용자 정보 로드 실패:", error);
+      }
+    };
+    
+    loadUserInfo();
+  }, [isLoggedIn]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -40,44 +67,100 @@ export function PreOrderAnalyzePage() {
       return;
     }
 
+    if (!userInfo) {
+      toast.error("사용자 정보가 필요합니다. 프로필을 먼저 설정해주세요.");
+      return;
+    }
+
     setAnalyzing(true);
+    setUploading(false);
 
-    // AI 분석 시뮬레이션
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      let analysisResponse: NutritionAnalysisResponse | null = null;
 
-    // 모의 분석 결과
-    const mockResult: AnalysisResult = {
-      mainItem: {
-        name: "까르보나라 파스타",
-        restaurant: "파스타 하우스",
-        calories: 850,
-        protein: 28,
-        sodiumLevel: "고나트륨",
-        description: "크림 베이스의 진한 까르보나라 파스타"
-      },
-      alternatives: [
-        {
-          name: "토마토 파스타",
-          restaurant: "파스타 하우스",
-          calories: 520,
-          protein: 22,
-          sodiumLevel: "적정",
-          description: "토마토 소스 기반의 가벼운 파스타. 칼로리 39% 절감!"
-        },
-        {
-          name: "까르보나라 파스타 (단품)",
-          restaurant: "파스타 하우스",
-          calories: 650,
-          protein: 25,
-          sodiumLevel: "고나트륨",
-          description: "음료와 샐러드 제외. 칼로리 24% 절감!"
-        }
-      ]
-    };
+      // 링크 입력 모드
+      if (linkUrl) {
+        toast.info("메뉴 링크 분석 중...");
+        analysisResponse = await analyzeStoreLink({
+          store_url: linkUrl,
+          user_info: userInfo,
+        });
+      }
+      // 스크린샷 업로드 모드
+      // 옵션 A(권장): 한 번의 버튼 클릭으로 자동 처리되는 3단계 시퀀스
+      else if (screenshot) {
+        setUploading(true);
+        toast.info("이미지 업로드 중...");
 
-    setResult(mockResult);
-    setAnalyzing(false);
-    toast.success("메뉴 분석이 완료되었어요!");
+        // === 단계 1: 백엔드에서 presigned URL 요청 ===
+        const fileExtension = screenshot.name.split('.').pop()?.toLowerCase() || 'jpg';
+        const contentType = screenshot.type || `image/${fileExtension === 'jpg' ? 'jpeg' : fileExtension}`;
+        
+        const presignedData = await getPresignedUrl({
+          fileExtension: fileExtension,
+          contentType: contentType,
+        });
+
+        // === 단계 2: 프론트엔드에서 S3에 직접 PUT 업로드 ===
+        await uploadToS3(presignedData.presignedUrl, screenshot, contentType);
+        
+        setUploading(false);
+        toast.info("이미지 업로드 완료! 분석 중...");
+
+        // === 단계 3: 업로드 성공 시 바로 분석 API 호출 (S3 key 전달) ===
+        console.log("[PreOrderAnalyze] 분석 API 호출 시작:", {
+          s3_key: presignedData.key,
+          capture_id: `cart_${Date.now()}`,
+          user_info: userInfo,
+        });
+        analysisResponse = await analyzeCartImage({
+          s3_key: presignedData.key,
+          capture_id: `cart_${Date.now()}`,
+          user_info: userInfo,
+        });
+        console.log("[PreOrderAnalyze] 분석 API 응답 받음:", analysisResponse);
+      }
+
+      if (analysisResponse && analysisResponse.data && analysisResponse.data.analyses.length > 0) {
+        // 분석 결과를 UI 형식으로 변환
+        const analyses = analysisResponse.data.analyses;
+        
+        // OCR로 인식된 모든 메뉴를 점수 순으로 정렬하여 추천 목록으로 표시
+        const sortedAnalyses = [...analyses].sort((a, b) => b.score - a.score);
+        
+        const recommendedMenus = sortedAnalyses.map(analysis => ({
+          name: analysis.menu.name,
+          restaurant: analysis.menu.category_hint || "분석 결과",
+          calories: Math.round(analysis.nutrition.kcal),
+          protein: Math.round(analysis.nutrition.protein_g),
+          sodiumLevel: analysis.nutrition.sodium_mg > 2000 ? "고나트륨" 
+                      : analysis.nutrition.sodium_mg < 1000 ? "저나트륨" 
+                      : "적정" as "저나트륨" | "적정" | "고나트륨",
+          description: analysis.coach_sentence || analysis.menu.description || "",
+        }));
+
+        const result: AnalysisResult = {
+          recommendedMenus: recommendedMenus,
+        };
+
+        setResult(result);
+        toast.success("메뉴 분석이 완료되었어요!");
+      } else {
+        throw new Error("분석 결과가 없습니다.");
+      }
+    } catch (error: any) {
+      console.error("[PreOrderAnalyze] 분석 중 오류:", error);
+      console.error("[PreOrderAnalyze] 에러 상세:", {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        stack: error.stack,
+      });
+      toast.error(error.response?.data?.message || error.message || "분석 중 오류가 발생했습니다.");
+    } finally {
+      setAnalyzing(false);
+      setUploading(false);
+    }
   };
 
   const getSodiumColor = (level: string) => {
@@ -181,9 +264,14 @@ export function PreOrderAnalyzePage() {
                   className="w-full"
                   size="lg"
                   onClick={handleAnalyze}
-                  disabled={analyzing}
+                  disabled={analyzing || uploading || !userInfo}
                 >
-                  {analyzing ? (
+                  {uploading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      업로드 중...
+                    </>
+                  ) : analyzing ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                       분석 중...
@@ -195,6 +283,11 @@ export function PreOrderAnalyzePage() {
                     </>
                   )}
                 </Button>
+                {!userInfo && (
+                  <p className="text-sm text-red-600 text-center mt-2">
+                    프로필에서 성별과 생년월일을 먼저 설정해주세요.
+                  </p>
+                )}
               </CardContent>
             </Card>
 
@@ -205,48 +298,17 @@ export function PreOrderAnalyzePage() {
                 animate={{ opacity: 1, y: 0 }}
                 className="space-y-6"
               >
-                {/* 선택한 메뉴 */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>선택하신 메뉴</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      <div>
-                        <h3 className="text-xl mb-1">{result.mainItem.name}</h3>
-                        <p className="text-sm text-muted-foreground">
-                          {result.mainItem.restaurant}
-                        </p>
-                      </div>
-                      <div className="flex gap-3 flex-wrap">
-                        <Badge variant="outline" className="text-sm py-1 px-3">
-                          칼로리: {result.mainItem.calories}kcal
-                        </Badge>
-                        <Badge variant="outline" className="text-sm py-1 px-3">
-                          단백질: {result.mainItem.protein}g
-                        </Badge>
-                        <Badge className={getSodiumColor(result.mainItem.sodiumLevel)}>
-                          {result.mainItem.sodiumLevel}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        {result.mainItem.description}
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* 추천 대안 */}
+                {/* OCR로 인식된 메뉴 추천 */}
                 <div>
                   <div className="flex items-center gap-2 mb-4">
-                    <TrendingDown className="w-5 h-5 text-green-600" />
-                    <h2 className="text-2xl">이런 선택은 어떠세요?</h2>
+                    <Sparkles className="w-5 h-5 text-green-600" />
+                    <h2 className="text-2xl">인식된 메뉴 추천</h2>
                   </div>
                   <p className="text-muted-foreground mb-6">
-                    비슷하지만 조금 더 가벼운 선택지를 추천해드려요 🌿
+                    이미지에서 인식된 메뉴들을 영양 정보와 함께 추천해드려요 🍽️
                   </p>
                   <div className="grid gap-4">
-                    {result.alternatives.map((item, index) => (
+                    {result.recommendedMenus.map((item, index) => (
                       <motion.div
                         key={index}
                         initial={{ opacity: 0, x: -20 }}
@@ -273,9 +335,11 @@ export function PreOrderAnalyzePage() {
                                   {item.sodiumLevel}
                                 </Badge>
                               </div>
-                              <p className="text-sm text-green-700 bg-green-50 p-3 rounded-lg">
-                                💡 {item.description}
-                              </p>
+                              {item.description && (
+                                <p className="text-sm text-green-700 bg-green-50 p-3 rounded-lg">
+                                  💡 {item.description}
+                                </p>
+                              )}
                             </div>
                           </CardContent>
                         </Card>

@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../co
 import { Separator } from "../components/ui/separator";
 import { Checkbox } from "../components/ui/checkbox";
 import { Logo } from "../components/Logo";
-import { Mail, Lock, ArrowRight, Chrome } from "lucide-react";
+import { Mail, Lock, ArrowRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { loginApi } from "../api/auth";
@@ -51,8 +51,14 @@ export function LoginPage() {
 
 
   const handleSocialLogin = (provider: string) => {
-    console.log(`${provider} 로그인`);
-    // 실제로는 OAuth 처리
+    if (provider === 'kakao') {
+      // 백엔드 카카오 로그인 엔드포인트로 리다이렉트
+      const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+      window.location.href = `${API_BASE_URL}/api/v1/auth/kakao/login`;
+    } else {
+      console.log(`${provider} 로그인`);
+      // 다른 소셜 로그인은 추후 구현
+    }
   };
 
   return (
@@ -180,16 +186,6 @@ export function LoginPage() {
 
             {/* 소셜 로그인 */}
             <div className="space-y-3">
-              <Button
-                variant="outline"
-                className="w-full"
-                type="button"
-                onClick={() => handleSocialLogin('google')}
-              >
-                <Chrome className="w-4 h-4 mr-2" />
-                Google로 계속하기
-              </Button>
-
               <Button
                 variant="outline"
                 className="w-full"

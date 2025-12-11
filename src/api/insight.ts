@@ -42,14 +42,34 @@ export interface DayMeal {
   orderedAt: string;      // ISO 문자열
 }
 
+// 백엔드 DayMealsResponse.Meal 구조
+export interface DayMealDetail {
+  mealLogId: number;
+  menu: string;
+  category: string;
+  mealTime: MealTime;
+  mealDate: string;       // "YYYY-MM-DD"
+  createdAt: string;     // ISO 문자열
+  kcal: number | null;
+  sodiumMg: number | null;
+  proteinG: number | null;
+  carbG: number | null;
+  totalScore: number | null;
+}
+
 // /api/v1/meals/day 응답
 export interface DayMealsData {
   date: string;
-  totalKcal: number;
-  totalSodiumMg: number;
-  totalProteinG: number;
+  totalKcal: number | null;
+  totalSodiumMg: number | null;
+  totalProteinG: number | null;
+  totalCarbG: number | null;
   totalMeals: number;
-  meals: DayMeal[];
+  totalSnack: number;
+  totalNight: number;
+  dayScore: number | null;
+  dayColor: string | null;
+  meals: DayMealDetail[];
 }
 
 export interface DayMealsResponse {
@@ -59,11 +79,19 @@ export interface DayMealsResponse {
 
 // 인사이트 로그 요청 (POST /insights/logs)
 export interface InsightLogRequest {
-  source: string;
-  analysisId: number;
+  menu: string;
+  foodImageUrl?: string;
+  foodDescription?: string;
+  serving: number; // 인분 단위 (0.0 ~ 1.0)
   mealtime: MealTime;
-  // 예: "2025-12-05T13:00:00.000+09:00"
-  orderedAt: string;
+  mealDate: string; // "YYYY-MM-DD" 형식
+  // 이미 분석된 영양소 정보 (선택적)
+  kcal?: number;
+  sodiumMg?: number;
+  proteinG?: number;
+  carbG?: number;
+  // 카테고리 정보 (선택적)
+  category?: string;
 }
 
 export interface InsightLogResponse {

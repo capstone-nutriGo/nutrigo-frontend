@@ -24,7 +24,6 @@ import {
   Mail,
   Lock,
   User as UserIcon,
-  Chrome,
   Check,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -420,16 +419,6 @@ export function SignupPage() {
 
                 {/* 소셜 회원가입 */}
                 <div className="space-y-3">
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    type="button"
-                    onClick={() => handleSocialSignup("google")}
-                  >
-                    <Chrome className="w-4 h-4 mr-2" />
-                    Google로 시작하기
-                  </Button>
-
                   <Button
                     variant="outline"
                     className="w-full"

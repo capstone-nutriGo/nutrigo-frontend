@@ -29,6 +29,7 @@ export interface TokenData {
 export interface AuthResponse {
   success: boolean;
   data: TokenData;
+  isNewUser?: boolean; // 소셜 로그인 시 새 유저 여부
 }
 
 // LoginRequest.java
