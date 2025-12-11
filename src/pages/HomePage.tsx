@@ -50,10 +50,10 @@ export function HomePage() {
         const currentHour = now.getHours();
         
         let targetDate: string;
-        let targetMealTime: "DINNER" | "LUNCH";
+        let targetMealTime: "DINNER" | "LUNCH" | "BREAKFAST";
         let timeContext: string;
         
-        // 시간대에 따라 확인할 식사 결정
+        // 시간대에 따라 확인할 식사 결정 (모든 끼니에 알림)
         if (currentHour >= 6 && currentHour < 11) {
           // 아침 시간대: 전날 저녁 확인
           const yesterday = new Date(now);
@@ -61,13 +61,18 @@ export function HomePage() {
           targetDate = yesterday.toISOString().split('T')[0];
           targetMealTime = "DINNER";
           timeContext = "어제 저녁";
+        } else if (currentHour >= 11 && currentHour < 15) {
+          // 점심 시간대: 당일 아침 확인
+          targetDate = today;
+          targetMealTime = "BREAKFAST";
+          timeContext = "오늘 아침";
         } else if (currentHour >= 17) {
           // 저녁 시간대: 당일 점심 확인
           targetDate = today;
           targetMealTime = "LUNCH";
           timeContext = "오늘 점심";
         } else {
-          // 점심 시간대나 다른 시간대는 알림 표시 안 함
+          // 다른 시간대는 알림 표시 안 함
           return;
         }
 
@@ -110,10 +115,14 @@ export function HomePage() {
             title: `${timeContext}이(가) 조금 무거웠어요 😅`,
             message: currentHour >= 17 
               ? "저녁은 조금 가볍게 드셔보는 건 어떨까요?"
-              : "오늘 점심은 튀김보다는 국/덮밥 위주로 가볍게 먹어보는 건 어떨까요?",
+              : currentHour >= 11 && currentHour < 15
+              ? "오늘 점심은 튀김보다는 국/덮밥 위주로 가볍게 먹어보는 건 어떨까요?"
+              : "오늘은 나트륨이 낮은 메뉴로 몸을 쉬게 해주면 좋을 것 같아요!",
             suggestions: currentHour >= 17 
               ? ["국밥", "비빔밥", "샐러드", "죽"]
-              : ["국밥", "비빔밥", "샐러드", "샌드위치"]
+              : currentHour >= 11 && currentHour < 15
+              ? ["국밥", "비빔밥", "샐러드", "샌드위치"]
+              : ["샐러드", "닭가슴살 덮밥", "과일", "요거트"]
           };
         } else {
           // 칼로리와 나트륨이 모두 적정 범위면 알림 표시 안 함

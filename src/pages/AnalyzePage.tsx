@@ -77,7 +77,7 @@ export function AnalyzePage() {
       const records: MealRecord[] = [];
       const today = new Date();
       
-      // 최근 7일간의 데이터 가져오기
+      // 현재로부터 일주일 전까지의 데이터 가져오기 (오늘 포함 최근 7일)
       for (let i = 0; i < 7; i++) {
         const date = new Date(today);
         date.setDate(today.getDate() - i);
@@ -85,6 +85,7 @@ export function AnalyzePage() {
         
         try {
           const response: DayMealsResponse = await fetchDayMeals(dateStr);
+          console.log(`[AnalyzePage] fetchDayMeals for ${dateStr}:`, response);
           if (response.success && response.data.meals && response.data.meals.length > 0) {
             // 같은 날짜의 식사들을 그룹화
             const mealsByTime: { [key: string]: any[] } = {};
@@ -155,7 +156,10 @@ export function AnalyzePage() {
           }
         } catch (error) {
           // 특정 날짜의 데이터가 없으면 무시하고 다음 날짜로 진행
-          console.debug(`날짜 ${dateStr}의 데이터를 가져오지 못했습니다:`, error);
+          console.warn(`[AnalyzePage] 날짜 ${dateStr}의 데이터를 가져오지 못했습니다:`, error);
+          if (error instanceof Error) {
+            console.warn(`[AnalyzePage] error message:`, error.message);
+          }
         }
       }
       
@@ -166,10 +170,15 @@ export function AnalyzePage() {
         return b.time.localeCompare(a.time);
       });
       
-      // 최대 10개만 표시
-      setRecentRecords(records.slice(0, 10));
+      // 일주일 전까지의 데이터만 표시 (모든 데이터 표시)
+      console.log(`[AnalyzePage] 최근 기록 로드 완료: ${records.length}개 발견`);
+      setRecentRecords(records);
     } catch (error) {
-      console.error("최근 기록을 가져오는 중 오류:", error);
+      console.error("[AnalyzePage] 최근 기록을 가져오는 중 오류:", error);
+      if (error instanceof Error) {
+        console.error("[AnalyzePage] error message:", error.message);
+        console.error("[AnalyzePage] error stack:", error.stack);
+      }
       toast.error("최근 기록을 불러오는데 실패했습니다.");
     } finally {
       setIsLoadingRecords(false);
@@ -266,31 +275,26 @@ export function AnalyzePage() {
           capture_id: `capture_${Date.now()}`,
         });
 
+        // 사진 입력 모드에서는 백엔드에서 이미 저장하므로, 
+        // 분석 결과만 표시하고 저장 버튼을 누르면 추가 저장하지 않도록 플래그 설정
+        setS3Key(s3Key); // S3 키 저장 (이미 저장된 것을 표시하기 위해)
+
         // 분석 결과를 MealRecord 형식으로 변환
         if (analysisResponse.data && analysisResponse.data.items) {
-          const totalNutrition = analysisResponse.data.items.reduce(
-            (acc, item) => ({
-              calories: acc.calories + item.kcal,
-              protein: acc.protein + item.protein_g,
-              carbs: acc.carbs + item.carb_g,
-              sodium: acc.sodium + item.sodium_mg,
-            }),
-            { calories: 0, protein: 0, carbs: 0, sodium: 0 }
-          );
-
           const items = analysisResponse.data.items.map((item) => {
             // 카테고리가 비어있거나 null이면 메뉴명에서 추론 시도
             let category = item.category;
-            if (!category || category.trim() === "" || category === "알 수 없음") {
+            if (!category || category.trim() === "" || category === "알 수 없음" || category === "UNCATEGORIZED") {
               // 메뉴명에서 카테고리 추론 (간단한 휴리스틱)
+              // 순서가 중요: 더 구체적인 패턴을 먼저 체크해야 함
               const menuName = item.menu.toLowerCase();
-              if (menuName.includes("초밥") || menuName.includes("회") || menuName.includes("연어") || menuName.includes("담다")) {
-                category = "일식";
-              } else if (menuName.includes("짜장") || menuName.includes("짬뽕") || menuName.includes("볶음밥") || menuName.includes("탕수육")) {
-                category = "중식";
-              } else if (menuName.includes("비빔밥") || menuName.includes("한우") || menuName.includes("생육회")) {
+              if (menuName.includes("비빔밥") || menuName.includes("한우") || menuName.includes("생육회") || menuName.includes("김치") || menuName.includes("된장") || menuName.includes("국밥") || menuName.includes("불고기") || menuName.includes("갈비") || menuName.includes("삼겹살")) {
                 category = "한식";
-              } else if (menuName.includes("치킨") || menuName.includes("깐풍") || menuName.includes("윙")) {
+              } else if (menuName.includes("초밥") || menuName.includes("스시") || menuName.includes("연어") || menuName.includes("담다") || (menuName.includes("회") && !menuName.includes("생육회"))) {
+                category = "일식";
+              } else if (menuName.includes("짜장") || menuName.includes("짬뽕") || menuName.includes("볶음밥") || menuName.includes("탕수육") || menuName.includes("깐풍") || menuName.includes("마파두부")) {
+                category = "중식";
+              } else if (menuName.includes("치킨") || menuName.includes("윙")) {
                 category = "치킨";
               } else {
                 category = "기타";
@@ -299,15 +303,27 @@ export function AnalyzePage() {
             
             return {
               name: item.menu,
-              restaurant: category,
+              restaurant: category, // 카테고리를 restaurant에 저장
               consumption: 100,
               // 원본 영양소 데이터 저장 (섭취량 계산용)
-              baseKcal: item.kcal,
-              baseProtein: item.protein_g,
-              baseCarbs: item.carb_g,
-              baseSodium: item.sodium_mg,
+              // null이나 undefined가 아닌 경우에만 값 사용, 0도 유효한 값이므로 그대로 사용
+              baseKcal: item.kcal != null ? item.kcal : 0,
+              baseProtein: item.protein_g != null ? item.protein_g : 0,
+              baseCarbs: item.carb_g != null ? item.carb_g : 0,
+              baseSodium: item.sodium_mg != null ? item.sodium_mg : 0,
             };
           });
+
+          // 초기 영양소 합계 계산 (100% 기준)
+          const totalNutrition = items.reduce(
+            (acc, item) => ({
+              calories: acc.calories + (item.baseKcal || 0),
+              protein: acc.protein + (item.baseProtein || 0),
+              carbs: acc.carbs + (item.baseCarbs || 0),
+              sodium: acc.sodium + (item.baseSodium || 0),
+            }),
+            { calories: 0, protein: 0, carbs: 0, sodium: 0 }
+          );
 
           const result: MealRecord = {
             id: analysisResponse.data.capture_id,
@@ -366,14 +382,15 @@ export function AnalyzePage() {
           // 카테고리가 비어있거나 null이면 메뉴명에서 추론 시도
           let category = item.restaurant;
           if (!category || category.trim() === "" || category === "알 수 없음") {
+            // 순서가 중요: 더 구체적인 패턴을 먼저 체크해야 함
             const menuName = item.name.toLowerCase();
-            if (menuName.includes("초밥") || menuName.includes("회") || menuName.includes("연어") || menuName.includes("담다")) {
-              category = "일식";
-            } else if (menuName.includes("짜장") || menuName.includes("짬뽕") || menuName.includes("볶음밥") || menuName.includes("탕수육")) {
-              category = "중식";
-            } else if (menuName.includes("비빔밥") || menuName.includes("한우") || menuName.includes("생육회") || menuName.includes("김치") || menuName.includes("된장") || menuName.includes("국밥")) {
+            if (menuName.includes("비빔밥") || menuName.includes("한우") || menuName.includes("생육회") || menuName.includes("김치") || menuName.includes("된장") || menuName.includes("국밥") || menuName.includes("불고기") || menuName.includes("갈비") || menuName.includes("삼겹살")) {
               category = "한식";
-            } else if (menuName.includes("치킨") || menuName.includes("깐풍") || menuName.includes("윙")) {
+            } else if (menuName.includes("초밥") || menuName.includes("스시") || menuName.includes("연어") || menuName.includes("담다") || (menuName.includes("회") && !menuName.includes("생육회"))) {
+              category = "일식";
+            } else if (menuName.includes("짜장") || menuName.includes("짬뽕") || menuName.includes("볶음밥") || menuName.includes("탕수육") || menuName.includes("깐풍") || menuName.includes("마파두부")) {
+              category = "중식";
+            } else if (menuName.includes("치킨") || menuName.includes("윙")) {
               category = "치킨";
             } else {
               category = "기타";
@@ -385,16 +402,15 @@ export function AnalyzePage() {
           
           return {
             name: item.name,
-            restaurant: category,
+            restaurant: category, // 카테고리를 restaurant에 저장
             consumption: 100,
             // 토핑 정보 저장 (foodDescription에 사용)
             topping: item.topping || "",
-            // UI 표시용 추정 영양소 (nutrition 객체에 사용)
-            // 저장 시에는 백엔드에서 더 정확하게 추론하도록 undefined로 설정
-            baseKcal: undefined, // 백엔드에서 추론
-            baseProtein: undefined,
-            baseCarbs: undefined,
-            baseSodium: undefined,
+            // UI 표시용 추정 영양소를 baseKcal로도 저장 (섭취량 조절 시 사용)
+            baseKcal: estimated.kcal, // 텍스트 입력 시에도 baseKcal 설정
+            baseProtein: estimated.protein,
+            baseCarbs: estimated.carbs,
+            baseSodium: estimated.sodium,
             // UI 표시용 추정값 (별도 필드로 저장)
             estimatedKcal: estimated.kcal,
             estimatedProtein: estimated.protein,
@@ -406,10 +422,10 @@ export function AnalyzePage() {
         // 전체 영양소 합계 계산 (추정값 사용)
         const totalNutrition = items.reduce(
           (acc, item) => ({
-            calories: acc.calories + (item.estimatedKcal || item.baseKcal || 0),
-            protein: acc.protein + (item.estimatedProtein || item.baseProtein || 0),
-            carbs: acc.carbs + (item.estimatedCarbs || item.baseCarbs || 0),
-            sodium: acc.sodium + (item.estimatedSodium || item.baseSodium || 0),
+            calories: acc.calories + (item.baseKcal || item.estimatedKcal || 0),
+            protein: acc.protein + (item.baseProtein || item.estimatedProtein || 0),
+            carbs: acc.carbs + (item.baseCarbs || item.estimatedCarbs || 0),
+            sodium: acc.sodium + (item.baseSodium || item.estimatedSodium || 0),
           }),
           { calories: 0, protein: 0, carbs: 0, sodium: 0 }
         );
@@ -456,6 +472,8 @@ export function AnalyzePage() {
     if (!analysisResult) return;
 
     try {
+      // 사진 입력 모드와 텍스트 입력 모드 모두 동일하게 저장 처리
+
       // mealTime을 백엔드 형식으로 변환
       const mealTimeMap: Record<"아침" | "점심" | "저녁" | "야식", "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK"> = {
         "아침": "BREAKFAST",
@@ -494,18 +512,24 @@ export function AnalyzePage() {
         let adjustedProtein: number | undefined = undefined;
         let adjustedCarbs: number | undefined = undefined;
 
-        // baseKcal 등이 정의되어 있고 0보다 크면 사용
-        if (item.baseKcal !== undefined && item.baseKcal > 0) {
-          adjustedKcal = item.baseKcal * serving;
+        // baseKcal 또는 estimatedKcal이 있으면 사용 (텍스트 입력 시 estimatedKcal 사용)
+        const baseKcal = item.baseKcal ?? item.estimatedKcal ?? 0;
+        const baseSodium = item.baseSodium ?? item.estimatedSodium ?? 0;
+        const baseProtein = item.baseProtein ?? item.estimatedProtein ?? 0;
+        const baseCarbs = item.baseCarbs ?? item.estimatedCarbs ?? 0;
+
+        // 영양소 값이 0보다 크면 사용
+        if (baseKcal > 0) {
+          adjustedKcal = baseKcal * serving;
         }
-        if (item.baseSodium !== undefined && item.baseSodium > 0) {
-          adjustedSodium = item.baseSodium * serving;
+        if (baseSodium > 0) {
+          adjustedSodium = baseSodium * serving;
         }
-        if (item.baseProtein !== undefined && item.baseProtein > 0) {
-          adjustedProtein = item.baseProtein * serving;
+        if (baseProtein > 0) {
+          adjustedProtein = baseProtein * serving;
         }
-        if (item.baseCarbs !== undefined && item.baseCarbs > 0) {
-          adjustedCarbs = item.baseCarbs * serving;
+        if (baseCarbs > 0) {
+          adjustedCarbs = baseCarbs * serving;
         }
 
         // foodDescription 생성 (메뉴명, 식당명, 토핑 정보 포함)
@@ -531,7 +555,8 @@ export function AnalyzePage() {
           proteinG: adjustedProtein,
           carbG: adjustedCarbs,
           // 카테고리 정보 전달 (기타가 아닌 경우만)
-          category: item.restaurant && item.restaurant !== "알 수 없음" && item.restaurant !== "분석 결과" && item.restaurant !== "기타"
+          // 텍스트 입력 모드에서도 카테고리가 제대로 전달되도록 수정
+          category: item.restaurant && item.restaurant.trim() !== "" && item.restaurant !== "알 수 없음" && item.restaurant !== "분석 결과" && item.restaurant !== "기타"
             ? item.restaurant 
             : undefined,
         });
@@ -546,6 +571,7 @@ export function AnalyzePage() {
       setScreenshot(null);
       setScreenshotPreview(null);
       setAnalysisResult(null);
+      setS3Key(null);
       setMealDate(new Date().toISOString().split('T')[0]);
       setMealTime("점심");
       setTextMealItems([{ name: "", restaurant: "", topping: "" }]);
@@ -568,6 +594,49 @@ export function AnalyzePage() {
   const updateMealItem = (index: number, field: "name" | "restaurant" | "topping", value: string) => {
     const updated = [...textMealItems];
     updated[index] = { ...updated[index], [field]: value };
+    
+    // 메뉴명이 변경되면 자동으로 카테고리 추정
+    if (field === "name" && value.trim() !== "") {
+      const menuName = value.toLowerCase();
+      let category = "";
+      
+      // 순서가 중요: 더 구체적인 패턴을 먼저 체크해야 함
+      if (menuName.includes("비빔밥") || menuName.includes("한우") || menuName.includes("생육회") || 
+          menuName.includes("김치") || menuName.includes("된장") || menuName.includes("국밥") || 
+          menuName.includes("불고기") || menuName.includes("갈비") || menuName.includes("삼겹살") ||
+          menuName.includes("김밥") || menuName.includes("떡볶이") || menuName.includes("순두부") ||
+          menuName.includes("된장찌개") || menuName.includes("김치찌개") || menuName.includes("부대찌개") ||
+          menuName.includes("제육볶음") || menuName.includes("닭볶음탕") || menuName.includes("해물파전")) {
+        category = "한식";
+      } else if (menuName.includes("초밥") || menuName.includes("스시") || menuName.includes("연어") || 
+                 menuName.includes("담다") || (menuName.includes("회") && !menuName.includes("생육회")) ||
+                 menuName.includes("우동") || menuName.includes("라멘") || menuName.includes("돈까스") ||
+                 menuName.includes("규동") || menuName.includes("오므라이스")) {
+        category = "일식";
+      } else if (menuName.includes("짜장") || menuName.includes("짬뽕") || menuName.includes("볶음밥") || 
+                 menuName.includes("탕수육") || menuName.includes("깐풍") || menuName.includes("마파두부") ||
+                 menuName.includes("양장피") || menuName.includes("유산슬") || menuName.includes("깐쇼새우")) {
+        category = "중식";
+      } else if (menuName.includes("치킨") || menuName.includes("윙") || menuName.includes("닭강정")) {
+        category = "치킨";
+      } else if (menuName.includes("파스타") || menuName.includes("스테이크") || menuName.includes("피자") ||
+                 menuName.includes("햄버거") || menuName.includes("샐러드") || menuName.includes("리조또")) {
+        category = "양식";
+      } else if (menuName.includes("쌀국수") || menuName.includes("팟타이") || menuName.includes("똠양꿍") ||
+                 menuName.includes("월남쌈") || menuName.includes("분짜")) {
+        category = "아시안";
+      } else if (menuName.includes("타코") || menuName.includes("부리또") || menuName.includes("퀘사디아")) {
+        category = "멕시칸";
+      } else {
+        category = "기타";
+      }
+      
+      // 식당 이름이 비어있거나 기타가 아닌 경우에만 자동으로 카테고리 설정
+      if (!updated[index].restaurant || updated[index].restaurant.trim() === "" || updated[index].restaurant === "기타") {
+        updated[index].restaurant = category;
+      }
+    }
+    
     setTextMealItems(updated);
   };
 
@@ -598,6 +667,15 @@ export function AnalyzePage() {
       },
       { calories: 0, protein: 0, carbs: 0, sodium: 0 }
     );
+
+    // 상태 업데이트
+    setAnalysisResult({
+      ...analysisResult,
+      items: updatedItems,
+      nutrition: recalculatedNutrition,
+      sodiumLevel: recalculatedNutrition.sodium > 2000 ? "고나트륨" : recalculatedNutrition.sodium < 1000 ? "저나트륨" : "적정",
+      calorieLevel: recalculatedNutrition.calories > 2000 ? "과식" : "적정",
+    });
     
     // 나트륨 레벨 재계산
     let sodiumLevel: "저나트륨" | "적정" | "고나트륨" = "적정";
@@ -747,13 +825,16 @@ export function AnalyzePage() {
                               />
                             </div>
                             <div>
-                              <Label htmlFor={`restaurant-${index}`}>식당 이름 (선택)</Label>
+                              <Label htmlFor={`restaurant-${index}`}>카테고리 (자동 추정)</Label>
                               <Input
                                 id={`restaurant-${index}`}
-                                placeholder="예: 치킨플러스, 한식당"
+                                placeholder="예: 한식, 일식, 중식, 치킨"
                                 value={item.restaurant}
                                 onChange={(e) => updateMealItem(index, "restaurant", e.target.value)}
                               />
+                              <p className="text-xs text-muted-foreground mt-1">
+                                메뉴명을 입력하면 자동으로 추정됩니다. 수정 가능합니다.
+                              </p>
                             </div>
                             <div>
                               <Label htmlFor={`topping-${index}`}>토핑/추가재료 (선택)</Label>

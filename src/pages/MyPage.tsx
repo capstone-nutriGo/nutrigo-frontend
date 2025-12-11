@@ -268,9 +268,9 @@ export function MyPage() {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between p-4 border rounded-lg">
                     <div>
-                      <Label className="text-base">저녁 코치 알림</Label>
+                      <Label className="text-base">식단 코치 알림</Label>
                       <p className="text-sm text-muted-foreground">
-                        저녁 식사 전 영양 코칭을 받아보세요
+                        아침, 점심, 저녁 식사 전 영양 코칭을 받아보세요
                       </p>
                     </div>
                     <Select 
@@ -327,6 +327,75 @@ export function MyPage() {
                     </>
                   )}
                 </Button>
+              </CardContent>
+            </Card>
+
+            {/* 알림 테스트 */}
+            <Card className="bg-blue-50 border-blue-200">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings className="w-6 h-6 text-blue-600" />
+                  알림 테스트
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  알림 기능을 테스트해볼 수 있어요. 실제 알림은 전송되지 않고 로그만 확인됩니다.
+                </p>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={async () => {
+                      try {
+                        console.log("[MyPage] 식단 코치 알림 테스트 시작");
+                        const { testMealCoachNotification } = await import("../api/notification");
+                        const result = await testMealCoachNotification();
+                        console.log("[MyPage] 식단 코치 알림 테스트 결과:", result);
+                        // 여러 줄 메시지를 표시하기 위해 description 사용
+                        const lines = result.message.split('\n');
+                        const title = lines[0] || "식단 코치 알림";
+                        const description = lines.slice(1).join('\n') || "";
+                        toast.success(title, {
+                          description: description || undefined,
+                          duration: 5000, // 5초간 표시
+                        });
+                      } catch (error: any) {
+                        console.error("[MyPage] 식단 코치 알림 테스트 에러:", error);
+                        const errorMessage = error.response?.data?.message || error.message || "알림 테스트 실패";
+                        toast.error(errorMessage);
+                      }
+                    }}
+                  >
+                    식단 코치 알림 테스트
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={async () => {
+                      try {
+                        console.log("[MyPage] 챌린지 리마인드 테스트 시작");
+                        const { testChallengeReminder } = await import("../api/notification");
+                        const result = await testChallengeReminder();
+                        console.log("[MyPage] 챌린지 리마인드 테스트 결과:", result);
+                        // 여러 줄 메시지를 표시하기 위해 description 사용
+                        const lines = result.message.split('\n');
+                        const title = lines[0] || "챌린지 리마인드 알림";
+                        const description = lines.slice(1).join('\n') || "";
+                        toast.success(title, {
+                          description: description || undefined,
+                          duration: 5000, // 5초간 표시
+                        });
+                      } catch (error: any) {
+                        console.error("[MyPage] 챌린지 리마인드 테스트 에러:", error);
+                        const errorMessage = error.response?.data?.message || error.message || "알림 테스트 실패";
+                        toast.error(errorMessage);
+                      }
+                    }}
+                  >
+                    챌린지 리마인드 테스트
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 

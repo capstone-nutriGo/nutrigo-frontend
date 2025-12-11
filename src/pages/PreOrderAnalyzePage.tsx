@@ -47,7 +47,12 @@ export function PreOrderAnalyzePage() {
             birthday: profile.data.birthday,
           });
         }
-      } catch (error) {
+      } catch (error: any) {
+        // 401/403 에러는 인터셉터에서 처리하므로 여기서는 조용히 무시
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          // 인터셉터에서 이미 로그인 페이지로 리다이렉트하므로 여기서는 아무것도 하지 않음
+          return;
+        }
         console.error("사용자 정보 로드 실패:", error);
       }
     };
@@ -78,17 +83,9 @@ export function PreOrderAnalyzePage() {
     try {
       let analysisResponse: NutritionAnalysisResponse | null = null;
 
-      // 링크 입력 모드
-      if (linkUrl) {
-        toast.info("메뉴 링크 분석 중...");
-        analysisResponse = await analyzeStoreLink({
-          store_url: linkUrl,
-          user_info: userInfo,
-        });
-      }
-      // 스크린샷 업로드 모드
+      // 스크린샷 업로드 모드 (이미지가 있으면 우선 처리)
       // 옵션 A(권장): 한 번의 버튼 클릭으로 자동 처리되는 3단계 시퀀스
-      else if (screenshot) {
+      if (screenshot) {
         setUploading(true);
         toast.info("이미지 업로드 중...");
 
@@ -119,6 +116,14 @@ export function PreOrderAnalyzePage() {
           user_info: userInfo,
         });
         console.log("[PreOrderAnalyze] 분석 API 응답 받음:", analysisResponse);
+      }
+      // 링크 입력 모드 (이미지가 없을 때만)
+      else if (linkUrl) {
+        toast.info("메뉴 링크 분석 중...");
+        analysisResponse = await analyzeStoreLink({
+          store_url: linkUrl,
+          user_info: userInfo,
+        });
       }
 
       if (analysisResponse && analysisResponse.data && analysisResponse.data.analyses.length > 0) {
