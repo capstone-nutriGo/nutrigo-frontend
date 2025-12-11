@@ -206,6 +206,26 @@ export function InsightsPage() {
     loadWeeklySummary();
   }, []);
 
+  /** ---------- 리포트 데이터 불러오기 ---------- */
+  useEffect(() => {
+    const loadReport = async () => {
+      try {
+        setIsLoadingReport(true);
+        const today = new Date();
+        const baseDate = today.toISOString().split('T')[0];
+        const res = await getReport(reportRange, baseDate);
+        setReportData(res);
+      } catch (error) {
+        console.error("리포트 로드 실패:", error);
+        setReportData(null);
+      } finally {
+        setIsLoadingReport(false);
+      }
+    };
+
+    loadReport();
+  }, [reportRange]);
+
   /** ---------- 날짜 클릭 시 /meals/day 호출 ---------- */
   const handleDateClick = async (day: CalendarDayWithLevel) => {
     setSelectedDate(day);
@@ -685,9 +705,13 @@ export function InsightsPage() {
                       <div className="space-y-2">
                         {topCategoriesData.map((category, index) => {
                           // API 데이터인지 하드코딩 데이터인지 확인
-                          const categoryName = typeof category === 'object' && 'category' in category 
+                          let categoryName = typeof category === 'object' && 'category' in category 
                             ? category.category 
                             : (category as any).name;
+                          // UNCATEGORIZED를 "기타"로 표시
+                          if (categoryName === "UNCATEGORIZED") {
+                            categoryName = "기타";
+                          }
                           const categoryCount = typeof category === 'object' && 'count' in category 
                             ? category.count 
                             : (category as any).count;
@@ -958,17 +982,19 @@ export function InsightsPage() {
                           <div className="flex-1">
                             <div className="flex justify-between items-center mb-1">
                               <span className="text-sm">
-                                {meal.source || "식사 기록"}
+                                {meal.menu || "식사 기록"}
                               </span>
                               <span className="text-xs text-muted-foreground">
                                 {meal.mealTime} ·{" "}
-                                {new Date(meal.orderedAt).toLocaleTimeString(
-                                  "ko-KR",
-                                  {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  }
-                                )}
+                                {meal.createdAt 
+                                  ? new Date(meal.createdAt).toLocaleTimeString(
+                                      "ko-KR",
+                                      {
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      }
+                                    )
+                                  : meal.mealDate || "시간 정보 없음"}
                               </span>
                             </div>
                           </div>

@@ -12,6 +12,7 @@ import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { NutriBotPage } from "./pages/NutriBotPage";
 import { ChallengePage } from "./pages/ChallengePage";
 import { InsightsPage } from "./pages/InsightsPage";
+import { KakaoCallbackPage } from "./pages/KakaoCallbackPage";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -60,6 +61,7 @@ function AppContent() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/auth/kakao/callback" element={<KakaoCallbackPage />} />
           <Route path="/preview_page.html" element={<Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

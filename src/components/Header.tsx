@@ -89,7 +89,7 @@ export function Header() {
                 location.pathname === "/analyze" ? "text-primary" : ""
               }`}
             >
-              사진 기록
+              식사 기록
             </button>
             <button
               onClick={() => handleNavigate("/pre-order")}
@@ -192,7 +192,7 @@ export function Header() {
                       }`}
                     >
                       <Camera className="w-4 h-4" />
-                      사진 기록
+                      식사 기록
                     </button>
                     <button
                       onClick={() => handleNavigate("/pre-order")}

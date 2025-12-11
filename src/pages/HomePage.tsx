@@ -34,9 +34,9 @@ export function HomePage() {
   const [weeklySummaryData, setWeeklySummaryData] = useState<any>(null);
   const [weeklyTip, setWeeklyTip] = useState<string>("");
 
-  // 페이지 로드 시 전날 기록 체크
+  // 페이지 로드 시 이전 식사 기록 체크
   useEffect(() => {
-    const checkYesterdayMeal = () => {
+    const checkPreviousMeal = async () => {
       // 오늘 이미 알림을 봤는지 체크
       const today = new Date().toISOString().split('T')[0];
       const lastShown = localStorage.getItem('mealAlertLastShown');
@@ -45,37 +45,93 @@ export function HomePage() {
         return; // 오늘 이미 봤으면 표시하지 않음
       }
 
-      // 전날 과식했는지 체크 (모의 데이터)
-      // 실제로는 캘린더 데이터를 체크해야 함
-      const shouldShowAlert = Math.random() > 0.3; // 70% 확률로 표시 (테스트용)
-      
-      if (shouldShowAlert) {
-        const adviceOptions = [
-          {
-            title: "어제 저녁이 조금 무거웠어요 😅",
-            message: "오늘 점심은 튀김보다는 국/덮밥 위주로 가볍게 먹어보는 건 어떨까요?",
-            suggestions: ["국밥", "비빔밥", "샐러드", "샌드위치"]
-          },
-          {
-            title: "어제 나트륨이 높았네요 🧂",
-            message: "오늘은 짜지 않은 메뉴로 몸을 쉬게 해주면 좋을 것 같아요!",
-            suggestions: ["샐러드", "닭가슴살 덮밥", "과일", "요거트"]
-          },
-          {
-            title: "어제 칼로리가 높았어요 🍗",
-            message: "오늘 점심은 조금 가볍게 드셔보는 건 어떨까요? 저녁이 더 맛있을 거예요!",
-            suggestions: ["샐러드", "죽", "국수", "김밥"]
-          }
-        ];
+      try {
+        const now = new Date();
+        const currentHour = now.getHours();
+        
+        let targetDate: string;
+        let targetMealTime: "DINNER" | "LUNCH";
+        let timeContext: string;
+        
+        // 시간대에 따라 확인할 식사 결정
+        if (currentHour >= 6 && currentHour < 11) {
+          // 아침 시간대: 전날 저녁 확인
+          const yesterday = new Date(now);
+          yesterday.setDate(yesterday.getDate() - 1);
+          targetDate = yesterday.toISOString().split('T')[0];
+          targetMealTime = "DINNER";
+          timeContext = "어제 저녁";
+        } else if (currentHour >= 17) {
+          // 저녁 시간대: 당일 점심 확인
+          targetDate = today;
+          targetMealTime = "LUNCH";
+          timeContext = "오늘 점심";
+        } else {
+          // 점심 시간대나 다른 시간대는 알림 표시 안 함
+          return;
+        }
 
-        const randomAdvice = adviceOptions[Math.floor(Math.random() * adviceOptions.length)];
-        setMealAdvice(randomAdvice);
-        setShowMealAlert(true);
+        // 해당 날짜의 식사 데이터 가져오기
+        const dayMealsResponse = await fetchDayMeals(targetDate);
+        
+        if (!dayMealsResponse.data || !dayMealsResponse.data.meals || dayMealsResponse.data.meals.length === 0) {
+          return; // 데이터가 없으면 알림 표시 안 함
+        }
+
+        // 해당 시간대의 식사 찾기
+        const targetMeals = dayMealsResponse.data.meals.filter(
+          meal => meal.mealTime === targetMealTime
+        );
+
+        if (targetMeals.length === 0) {
+          return; // 해당 시간대 식사가 없으면 알림 표시 안 함
+        }
+
+        // 식사 데이터 분석
+        const dayData = dayMealsResponse.data;
+        const totalKcal = dayData.totalKcal || 0;
+        const totalSodiumMg = dayData.totalSodiumMg || 0;
+        
+        // 기준값 설정 (일반적인 권장량 기준)
+        const highCalorieThreshold = 2500; // 하루 권장 칼로리
+        const highSodiumThreshold = 2000; // 하루 권장 나트륨 (mg)
+        
+        // 조언 메시지 생성
+        let advice: { title: string; message: string; suggestions: string[] } | null = null;
+
+        if (totalSodiumMg > highSodiumThreshold) {
+          advice = {
+            title: `${timeContext}이(가) 조금 짜셨네요 🧂`,
+            message: "오늘은 나트륨이 낮은 메뉴로 몸을 쉬게 해주면 좋을 것 같아요!",
+            suggestions: ["샐러드", "닭가슴살 덮밥", "과일", "요거트"]
+          };
+        } else if (totalKcal > highCalorieThreshold) {
+          advice = {
+            title: `${timeContext}이(가) 조금 무거웠어요 😅`,
+            message: currentHour >= 17 
+              ? "저녁은 조금 가볍게 드셔보는 건 어떨까요?"
+              : "오늘 점심은 튀김보다는 국/덮밥 위주로 가볍게 먹어보는 건 어떨까요?",
+            suggestions: currentHour >= 17 
+              ? ["국밥", "비빔밥", "샐러드", "죽"]
+              : ["국밥", "비빔밥", "샐러드", "샌드위치"]
+          };
+        } else {
+          // 칼로리와 나트륨이 모두 적정 범위면 알림 표시 안 함
+          return;
+        }
+
+        if (advice) {
+          setMealAdvice(advice);
+          setShowMealAlert(true);
+        }
+      } catch (error) {
+        console.error("식사 데이터 확인 중 오류:", error);
+        // 에러 발생 시 알림 표시 안 함
       }
     };
 
     // 컴포넌트 마운트 후 1초 뒤에 체크 (자연스러운 UX)
-    const timer = setTimeout(checkYesterdayMeal, 1000);
+    const timer = setTimeout(checkPreviousMeal, 1000);
     return () => clearTimeout(timer);
   }, []);
 

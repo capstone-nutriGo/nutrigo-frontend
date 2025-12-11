@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Slider } from "./ui/slider";
 import { Badge } from "./ui/badge";
-import { Mail, Lock, User as UserIcon, ArrowRight, Chrome, Check, ChevronLeft, Target, Zap, Droplets } from "lucide-react";
+import { Mail, Lock, User as UserIcon, ArrowRight, Check, ChevronLeft, Target, Zap, Droplets } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 
@@ -231,16 +231,6 @@ export function AuthDialog({ isOpen, onClose, defaultTab = "login" }: AuthDialog
                 variant="outline"
                 className="w-full"
                 type="button"
-                onClick={() => handleSocialAuth('google')}
-              >
-                <Chrome className="w-4 h-4 mr-2" />
-                Google로 계속하기
-              </Button>
-              
-              <Button
-                variant="outline"
-                className="w-full"
-                type="button"
                 onClick={() => handleSocialAuth('kakao')}
               >
                 <div className="w-4 h-4 mr-2 bg-yellow-400 rounded-full" />
@@ -370,16 +360,6 @@ export function AuthDialog({ isOpen, onClose, defaultTab = "login" }: AuthDialog
                 </div>
 
                 <div className="space-y-2">
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    type="button"
-                    onClick={() => handleSocialAuth('google')}
-                  >
-                    <Chrome className="w-4 h-4 mr-2" />
-                    Google로 시작하기
-                  </Button>
-                  
                   <Button
                     variant="outline"
                     className="w-full"
